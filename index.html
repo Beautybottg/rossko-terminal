@@ -52,45 +52,80 @@
         );
 
         // КОМПОНЕНТ ЗАГРУЗКИ EXCEL
-        const ExcelUpload = ({ onUpload }) => {
-            const [isProcessing, setIsProcessing] = useState(false);
-            const handleFile = async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                setIsProcessing(true);
-                const reader = new FileReader();
-                reader.onload = (evt) => {
-                    try {
-                        const bstr = evt.target.result;
-                        const wb = XLSX.read(bstr, { type: 'binary' });
-                        const ws = wb.Sheets[wb.SheetNames[0]];
-                        const data = XLSX.utils.sheet_to_json(ws);
-                        const formatted = data.map((item, i) => ({
-                            id: Date.now() + i,
-                            name: String(item.name || ""),
-                            brand: String(item.brand || "Rossko"),
-                            article: String(item.article || "—"),
-                            price: parseFloat(String(item.price).replace(/[^0-9.]/g, '')) || 0,
-                            category: String(item.category || "Прочее"),
-                            imageUrl: 'https://via.placeholder.com/150',
-                            isEssential: String(item.isEssential).toLowerCase() === 'true'
-                        }));
-                        onUpload(formatted);
-                    } catch (err) { alert("Ошибка файла"); }
-                    finally { setIsProcessing(false); }
-                };
-                reader.readAsBinaryString(file);
-            };
-            return (
-                <div className="p-4 border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/30 text-center">
-                    {isProcessing ? <p className="text-xs font-black animate-pulse text-blue-600">ЗАГРУЗКА...</p> : <input type="file" accept=".xlsx, .xls" onChange={handleFile} className="text-[10px]" />}
-                </div>
-            );
+      const ExcelUpload = ({ onUpload }) => {
+    const [isProcessing, setIsProcessing] = useState(false);
+
+    const handleFile = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setIsProcessing(true);
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            try {
+                // Используем более надежный метод чтения для браузеров
+                const data = new Uint8Array(evt.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const wsname = workbook.SheetNames[0];
+                const ws = workbook.Sheets[wsname];
+                const jsonData = XLSX.utils.sheet_to_json(ws);
+
+                if (jsonData.length === 0) {
+                    alert("Файл пуст или имеет неверный формат");
+                    return;
+                }
+
+                const formatted = jsonData.map((item, i) => ({
+                    id: Date.now() + i,
+                    name: String(item.name || "Без названия"),
+                    brand: String(item.brand || "Rossko"),
+                    article: String(item.article || "—"),
+                    price: parseFloat(String(item.price).replace(/[^0-9.]/g, '')) || 0,
+                    category: String(item.category || "Прочее"),
+                    imageUrl: 'https://via.placeholder.com/150',
+                    isEssential: String(item.isEssential).toLowerCase() === 'true'
+                }));
+
+                onUpload(formatted);
+                // Сохраняем в память телефона, чтобы база была сразу при следующем входе
+                localStorage.setItem('rossko_db', JSON.stringify(formatted));
+                
+            } catch (err) {
+                console.error(err);
+                alert("Ошибка при разборе Excel. Проверьте названия колонок (name, price, brand, article)");
+            } finally {
+                setIsProcessing(false);
+            }
         };
+        reader.readAsArrayBuffer(file); // Самый стабильный метод
+    };
+
+    return (
+        <div className="p-4 border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/30 text-center">
+            {isProcessing ? (
+                <p className="text-xs font-black animate-pulse text-[#0054a6]">ОБРАБОТКА ТОВАРОВ...</p>
+            ) : (
+                <div className="flex flex-col items-center gap-2">
+                    <span className="text-[10px] font-black text-gray-400 uppercase">Нажмите для выбора Excel</span>
+                    <input type="file" accept=".xlsx, .xls" onChange={handleFile} className="text-[10px] block w-full text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-blue-50 file:text-[#0054a6] hover:file:bg-blue-100" />
+                </div>
+            )}
+        </div>
+    );
+};
 
         // ОСНОВНОЙ КОМПОНЕНТ APP
-        const App = () => {
-            const [parts, setParts] = useState(PARTS);
+     const App = () => {
+            // Загружаем базу из памяти или используем дефолтный массив
+            const [parts, setParts] = useState(() => {
+                const saved = localStorage.getItem('rossko_db');
+                try {
+                    return saved ? JSON.parse(saved) : PARTS;
+                } catch (e) {
+                    return PARTS;
+                }
+            });
+
             const [view, setView] = useState('home');
             const [searchQuery, setSearchQuery] = useState('');
             const [activeCategory, setActiveCategory] = useState('Все');
@@ -100,6 +135,13 @@
             const [authMode, setAuthMode] = useState('login');
             const [user, setUser] = useState({ name: '', phone: '', balance: 5000 });
 
+            // Сохраняем базу в LocalStorage каждый раз, когда массив parts меняется
+            useEffect(() => {
+                if (parts !== PARTS) {
+                    localStorage.setItem('rossko_db', JSON.stringify(parts));
+                }
+            }, [parts]);
+
             useEffect(() => { setCurrentPage(1); }, [searchQuery, activeCategory]);
 
             const allFilteredParts = useMemo(() => {
@@ -108,7 +150,10 @@
                 const firstWord = words[0] || "";
                 
                 const filtered = parts.filter(p => {
-                    const matchesWords = words.every(w => p.name.toLowerCase().includes(w) || p.article.toLowerCase().includes(w));
+                    const matchesWords = words.every(w => 
+                        p.name.toLowerCase().includes(w) || 
+                        p.article.toLowerCase().includes(w)
+                    );
                     const matchesCat = activeCategory === 'Все' || p.category === activeCategory;
                     return matchesWords && matchesCat;
                 });
@@ -134,12 +179,12 @@
                                 placeholder="Поиск..."
                                 onFocus={() => setView('search')}
                             />
-                            <h2 className="text-lg font-black uppercase italic">Часто покупают</h2>
+                            <h2 className="text-lg font-black uppercase italic text-gray-800">Часто покупают</h2>
                             <div className="flex space-x-4 overflow-x-auto pb-4 no-scrollbar">
                                 {parts.filter(p => p.isEssential).map(p => (
-                                    <div key={p.id} className="min-w-[150px] bg-white p-4 rounded-2xl border shadow-sm">
+                                    <div key={p.id} onClick={() => setEditingPart(p)} className="min-w-[150px] bg-white p-4 rounded-2xl border shadow-sm active:scale-95 transition-transform">
                                         <div className="h-20 bg-gray-50 rounded-xl mb-2 flex items-center justify-center text-3xl">📦</div>
-                                        <h3 className="text-[10px] font-bold h-8 line-clamp-2">{p.name}</h3>
+                                        <h3 className="text-[10px] font-bold h-8 line-clamp-2 text-gray-900">{p.name}</h3>
                                         <p className="text-[#0054a6] font-black text-sm mt-1">{p.price}₽</p>
                                     </div>
                                 ))}
@@ -150,7 +195,7 @@
                     {view === 'search' && (
                         <div className="px-4 py-4 space-y-4">
                             <input 
-                                className="w-full border-2 border-gray-200 rounded-xl py-3 px-4 text-sm font-bold outline-none"
+                                className="w-full border-2 border-gray-200 rounded-xl py-3 px-4 text-sm font-bold outline-none focus:border-[#0054a6]"
                                 placeholder="Поиск запчастей..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -158,12 +203,12 @@
                             />
                             <div className="flex space-x-2 overflow-x-auto no-scrollbar">
                                 {CATEGORIES.map(cat => (
-                                    <button key={cat} onClick={() => setActiveCategory(cat)} className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase whitespace-nowrap ${activeCategory === cat ? 'bg-[#0054a6] text-white' : 'bg-white text-gray-500 border'}`}>
+                                    <button key={cat} onClick={() => setActiveCategory(cat)} className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase whitespace-nowrap transition-colors ${activeCategory === cat ? 'bg-[#0054a6] text-white' : 'bg-white text-gray-500 border'}`}>
                                         {cat}
                                     </button>
                                 ))}
                             </div>
-                            <div className="grid gap-3">
+                            <div className="grid gap-3 pb-20">
                                 {paginatedParts.map(p => (
                                     <div key={p.id} onClick={() => setEditingPart(p)} className="bg-white p-4 rounded-2xl border shadow-sm flex items-center justify-between active:bg-gray-50">
                                         <div>
@@ -174,12 +219,17 @@
                                         <div className="text-[#0054a6] font-black">→</div>
                                     </div>
                                 ))}
+                                {allFilteredParts.length === 0 && (
+                                    <div className="text-center py-10 text-gray-400 text-xs font-bold uppercase">Ничего не найдено</div>
+                                )}
                             </div>
                             {totalPages > 1 && (
-                                <div className="flex items-center justify-between p-2">
-                                    <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} className="text-[10px] font-black uppercase text-[#0054a6]">← Пред</button>
-                                    <span className="text-[10px] font-black text-gray-400">Стр {currentPage} / {totalPages}</span>
-                                    <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)} className="text-[10px] font-black uppercase text-[#0054a6]">След →</button>
+                                <div className="fixed bottom-20 left-0 right-0 max-w-md mx-auto px-4">
+                                    <div className="flex items-center justify-between p-2 bg-white/90 backdrop-blur shadow-lg rounded-2xl border">
+                                        <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} className={`text-[10px] font-black uppercase ${currentPage === 1 ? 'text-gray-300' : 'text-[#0054a6]'}`}>← Пред</button>
+                                        <span className="text-[10px] font-black text-gray-400">Стр {currentPage} / {totalPages}</span>
+                                        <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)} className={`text-[10px] font-black uppercase ${currentPage === totalPages ? 'text-gray-300' : 'text-[#0054a6]'}`}>След →</button>
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -189,23 +239,26 @@
                         <div className="px-6 py-8">
                             {!isLoggedIn ? (
                                 <div className="bg-white p-8 rounded-[32px] border shadow-sm space-y-4 text-center">
-                                    <h2 className="text-xl font-black uppercase">{authMode === 'login' ? 'Вход' : 'Регистрация'}</h2>
-                                    <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold" placeholder="Телефон" />
-                                    <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold" type="password" placeholder="Пароль" />
+                                    <h2 className="text-xl font-black uppercase italic text-gray-800">{authMode === 'login' ? 'Вход' : 'Регистрация'}</h2>
+                                    <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold outline-none focus:border-[#0054a6]" placeholder="Телефон" />
+                                    <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold outline-none focus:border-[#0054a6]" type="password" placeholder="Пароль" />
                                     <button onClick={() => setIsLoggedIn(true)} className="w-full py-4 bg-[#0054a6] text-white rounded-2xl font-black uppercase text-xs shadow-lg">Продолжить</button>
                                     <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className="text-[10px] font-black uppercase text-gray-400">Сменить режим</button>
                                 </div>
                             ) : (
                                 <div className="space-y-6">
-                                    <div className="bg-[#0054a6] rounded-[32px] p-8 text-white shadow-xl">
-                                        <p className="text-[10px] font-black uppercase opacity-60">Профиль</p>
-                                        <h3 className="text-2xl font-bold">Клиент Rossko</h3>
-                                        <div className="mt-8">
-                                            <p className="text-[10px] font-black uppercase opacity-60">Баланс</p>
-                                            <p className="text-3xl font-black">5 000 ₽</p>
+                                    <div className="bg-[#0054a6] rounded-[32px] p-8 text-white shadow-xl relative overflow-hidden">
+                                        <div className="relative z-10">
+                                            <p className="text-[10px] font-black uppercase opacity-60">Профиль</p>
+                                            <h3 className="text-2xl font-bold">Клиент Rossko</h3>
+                                            <div className="mt-8">
+                                                <p className="text-[10px] font-black uppercase opacity-60">Баланс</p>
+                                                <p className="text-3xl font-black">5 000 ₽</p>
+                                            </div>
                                         </div>
+                                        <div className="absolute -right-4 -bottom-4 text-white/10 text-9xl font-black italic">R</div>
                                     </div>
-                                    <button onClick={() => setIsLoggedIn(false)} className="w-full py-4 text-red-500 font-black uppercase text-[10px]">Выйти</button>
+                                    <button onClick={() => setIsLoggedIn(false)} className="w-full py-4 text-red-500 font-black uppercase text-[10px] tracking-widest">Выйти из аккаунта</button>
                                 </div>
                             )}
                         </div>
@@ -213,26 +266,41 @@
 
                     {view === 'manage' && (
                         <div className="px-6 py-6 space-y-6">
-                            <h2 className="text-xl font-black uppercase italic">Управление складом</h2>
+                            <h2 className="text-xl font-black uppercase italic text-gray-800">Управление складом</h2>
                             <ExcelUpload onUpload={setParts} />
                             <div className="bg-white p-6 rounded-3xl border shadow-sm text-center">
                                 <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Товаров в базе</p>
                                 <p className="text-3xl font-black text-[#0054a6]">{parts.length.toLocaleString()}</p>
                             </div>
+                            <button 
+                                onClick={() => { if(confirm('Очистить базу?')) { setParts(PARTS); localStorage.removeItem('rossko_db'); } }}
+                                className="w-full py-2 text-gray-300 font-bold text-[10px] uppercase"
+                            >
+                                Сбросить базу данных
+                            </button>
                         </div>
                     )}
 
                     {editingPart && (
                         <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 backdrop-blur-sm p-4">
-                            <div className="w-full max-w-md bg-white rounded-[32px] p-8">
-                                <h3 className="text-lg font-black uppercase mb-4">Редактировать цену</h3>
-                                <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold text-lg mb-6" type="number" value={editingPart.price} onChange={e => setEditingPart({...editingPart, price: Number(e.target.value)})} />
+                            <div className="w-full max-w-md bg-white rounded-[32px] p-8 shadow-2xl animate-slide-up">
+                                <h3 className="text-lg font-black uppercase mb-4 italic text-gray-800">Редактировать товар</h3>
+                                <div className="space-y-4 mb-6">
+                                    <div>
+                                        <label className="text-[10px] font-black uppercase text-gray-400 ml-2">Название</label>
+                                        <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold" value={editingPart.name} onChange={e => setEditingPart({...editingPart, name: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-black uppercase text-gray-400 ml-2">Цена (₽)</label>
+                                        <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold text-lg text-[#0054a6]" type="number" value={editingPart.price} onChange={e => setEditingPart({...editingPart, price: Number(e.target.value)})} />
+                                    </div>
+                                </div>
                                 <div className="flex gap-4">
-                                    <button onClick={() => setEditingPart(null)} className="flex-1 py-4 bg-gray-100 rounded-2xl font-black uppercase text-xs">Отмена</button>
+                                    <button onClick={() => setEditingPart(null)} className="flex-1 py-4 bg-gray-100 rounded-2xl font-black uppercase text-xs text-gray-500">Отмена</button>
                                     <button onClick={() => {
                                         setParts(prev => prev.map(p => p.id === editingPart.id ? editingPart : p));
                                         setEditingPart(null);
-                                    }} className="flex-1 py-4 bg-[#0054a6] text-white rounded-2xl font-black uppercase text-xs">Сохранить</button>
+                                    }} className="flex-1 py-4 bg-[#0054a6] text-white rounded-2xl font-black uppercase text-xs shadow-lg shadow-blue-200">Сохранить</button>
                                 </div>
                             </div>
                         </div>
@@ -246,3 +314,4 @@
     </script>
 </body>
 </html>
+
