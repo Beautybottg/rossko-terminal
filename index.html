@@ -44,26 +44,62 @@
             const [view, setView] = useState('home');
             const [searchQuery, setSearchQuery] = useState('');
             const [activeCategory, setActiveCategory] = useState('Все');
-            const [editingPart, setEditingPart] = useState(null);
             const [isLoading, setIsLoading] = useState(true);
+            const [isUploading, setIsUploading] = useState(false);
 
-            // 1. АВТОМАТИЧЕСКАЯ ЗАГРУЗКА БАЗЫ С GITHUB
-            useEffect(() => {
-                const loadData = async () => {
+            // 1. ЗАГРУЗКА БАЗЫ
+            const loadData = async () => {
+                setIsLoading(true);
+                try {
+                    const response = await fetch('data.xlsx?v=' + Date.now()); // Чистим кэш
+                    if (!response.ok) throw new Error("Файл не найден на сервере");
+                    
+                    const arrayBuffer = await response.arrayBuffer();
+                    const data = new Uint8Array(arrayBuffer);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const ws = workbook.Sheets[workbook.SheetNames[0]];
+                    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+                    
+                    const formatted = rows.slice(1).map((row, i) => {
+                        if (!row[1]) return null;
+                        return {
+                            id: row[0] || i,
+                            name: String(row[1]),
+                            brand: String(row[2] || "Rossko"),
+                            article: String(row[3] || "—"),
+                            price: parseFloat(String(row[4]).replace(/[^0-9.]/g, '')) || 0,
+                            category: String(row[5] || "Прочее")
+                        };
+                    }).filter(Boolean);
+
+                    setParts(formatted);
+                    localStorage.setItem('rossko_cache', JSON.stringify(formatted));
+                } catch (e) {
+                    const cached = localStorage.getItem('rossko_cache');
+                    if (cached) setParts(JSON.parse(cached));
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            useEffect(() => { loadData(); }, []);
+
+            // 2. ОБРАБОТКА ФАЙЛА (Загрузка вручную)
+            const handleFileUpload = (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setIsUploading(true);
+
+                const reader = new FileReader();
+                reader.onload = (evt) => {
                     try {
-                        // Пытаемся загрузить data.xlsx из корня сайта
-                        const response = await fetch('data.xlsx');
-                        if (!response.ok) throw new Error("Файл не найден");
-                        
-                        const arrayBuffer = await response.arrayBuffer();
-                        const data = new Uint8Array(arrayBuffer);
+                        const data = new Uint8Array(evt.target.result);
                         const workbook = XLSX.read(data, { type: 'array' });
                         const ws = workbook.Sheets[workbook.SheetNames[0]];
-                        
-                        // Читаем по номерам колонок для надежности
                         const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+                        
                         const formatted = rows.slice(1).map((row, i) => {
-                            if (!row[1]) return null; // Пропуск если нет имени
+                            if (!row[1]) return null;
                             return {
                                 id: row[0] || i,
                                 name: String(row[1]),
@@ -76,123 +112,130 @@
 
                         setParts(formatted);
                         localStorage.setItem('rossko_cache', JSON.stringify(formatted));
-                    } catch (e) {
-                        console.error("Ошибка автозагрузки:", e);
-                        // Если файл не найден, берем из локального кэша
-                        const cached = localStorage.getItem('rossko_cache');
-                        if (cached) setParts(JSON.parse(cached));
+                        alert(`Успешно загружено ${formatted.length} позиций в локальную память.`);
+                    } catch (err) {
+                        alert("Ошибка разбора Excel");
                     } finally {
-                        setIsLoading(false);
+                        setIsUploading(false);
+                        e.target.value = '';
                     }
                 };
-                loadData();
-            }, []);
+                reader.readAsArrayBuffer(file);
+            };
 
-            // 2. ОПТИМИЗИРОВАННЫЙ ПОИСК (Убирает зависания)
             const filtered = useMemo(() => {
                 const q = searchQuery.toLowerCase().trim();
                 let result = parts;
-
-                if (activeCategory !== 'Все') {
-                    result = result.filter(p => p.category === activeCategory);
-                }
-
+                if (activeCategory !== 'Все') result = result.filter(p => p.category === activeCategory);
                 if (q) {
                     result = result.filter(p => 
-                        p.name.toLowerCase().includes(q) || 
-                        p.article.toLowerCase().includes(q) ||
-                        p.brand.toLowerCase().includes(q)
+                        p.name.toLowerCase().includes(q) || p.article.toLowerCase().includes(q)
                     );
                 }
-
-                return result.slice(0, 50); // Показываем только первые 50 для скорости
+                return result.slice(0, 50);
             }, [parts, searchQuery, activeCategory]);
 
             if (isLoading) return (
-                <div className="flex h-screen items-center justify-center bg-white">
-                    <div className="text-center">
-                        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-600">Синхронизация базы...</p>
-                    </div>
+                <div className="flex h-screen items-center justify-center bg-white italic font-black text-blue-600 uppercase tracking-widest text-[10px]">
+                    Синхронизация...
                 </div>
             );
 
             return (
                 <div className="max-w-md mx-auto min-h-screen pb-24 relative bg-white shadow-2xl overflow-hidden">
-                    {/* Контент */}
+                    {/* HOME VIEW */}
                     {view === 'home' && (
                         <div className="p-6 space-y-8 animate-slide-up">
                             <div className="pt-4">
                                 <p className="text-[10px] font-black uppercase text-blue-600 mb-1 tracking-widest">Rossko Terminal</p>
-                                <h1 className="text-4xl font-black italic uppercase text-gray-800 leading-none text-balance">Складской<br/>Учет</h1>
+                                <h1 className="text-4xl font-black italic uppercase text-gray-800 leading-none">Складской<br/>Учет</h1>
                             </div>
                             <div className="bg-gray-50 border p-5 rounded-3xl flex items-center gap-4" onClick={() => setView('search')}>
                                 <span className="text-xl">🔍</span>
                                 <span className="text-gray-400 font-bold text-sm">Поиск по всей базе...</span>
                             </div>
                             <div className="bg-blue-600 rounded-[32px] p-8 text-white shadow-xl relative overflow-hidden">
-                                <p className="text-[10px] font-black uppercase opacity-60">Товаров в наличии</p>
+                                <p className="text-[10px] font-black uppercase opacity-60">Товаров в базе</p>
                                 <p className="text-5xl font-black mt-1">{parts.length}</p>
                                 <div className="absolute -right-6 -bottom-6 text-white opacity-10 text-8xl font-black italic">R</div>
                             </div>
                         </div>
                     )}
 
+                    {/* SEARCH VIEW */}
                     {view === 'search' && (
                         <div className="p-4 space-y-4 animate-slide-up">
-                            <div className="sticky top-0 bg-white/80 backdrop-blur-md pt-2 pb-4 z-10 space-y-4">
-                                <input 
-                                    className="w-full bg-gray-50 border-2 border-gray-100 p-5 rounded-[24px] font-bold outline-none focus:border-blue-500 transition-all text-lg shadow-inner"
-                                    placeholder="Артикул или название..."
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                />
-                                <div className="flex gap-2 overflow-x-auto no-scrollbar">
-                                    {CATEGORIES.map(c => (
-                                        <button key={c} onClick={() => setActiveCategory(c)} className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase whitespace-nowrap transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-400'}`}>
-                                            {c}
-                                        </button>
-                                    ))}
-                                </div>
+                            <input 
+                                className="w-full bg-gray-50 border-2 border-gray-100 p-5 rounded-[24px] font-bold outline-none focus:border-blue-500 text-lg shadow-inner"
+                                placeholder="Артикул или название..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                            <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                                {CATEGORIES.map(c => (
+                                    <button key={c} onClick={() => setActiveCategory(c)} className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase whitespace-nowrap ${activeCategory === c ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-400'}`}>
+                                        {c}
+                                    </button>
+                                ))}
                             </div>
-                            
                             <div className="space-y-3">
                                 {filtered.map(p => (
-                                    <div key={p.id} className="bg-white border p-5 rounded-[28px] flex justify-between items-center active:scale-[0.98] transition-transform shadow-sm">
-                                        <div className="flex-1 pr-4">
-                                            <p className="text-[10px] font-black text-blue-600 uppercase mb-1">{p.brand}</p>
-                                            <p className="text-sm font-bold leading-tight text-gray-800">{p.name}</p>
-                                            <p className="text-[10px] font-mono text-gray-400 mt-2">АРТ: {p.article}</p>
-                                            <p className="text-xl font-black mt-2 text-gray-900">{p.price} ₽</p>
-                                        </div>
-                                        <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-blue-600 font-black">→</div>
+                                    <div key={p.id} className="bg-white border p-5 rounded-[28px] shadow-sm">
+                                        <p className="text-[10px] font-black text-blue-600 uppercase mb-1">{p.brand}</p>
+                                        <p className="text-sm font-bold leading-tight text-gray-800">{p.name}</p>
+                                        <p className="text-[10px] font-mono text-gray-400 mt-2">АРТ: {p.article}</p>
+                                        <p className="text-xl font-black mt-2 text-gray-900">{p.price} ₽</p>
                                     </div>
                                 ))}
-                                {filtered.length === 0 && <p className="text-center py-20 text-gray-300 font-black uppercase text-xs">Ничего не найдено</p>}
-                                {parts.length > 50 && searchQuery === '' && <p className="text-center text-[10px] text-gray-300 uppercase font-black py-4">Показаны первые 50 позиций</p>}
                             </div>
                         </div>
                     )}
 
-                    {view === 'profile' && (
-                        <div className="p-10 text-center space-y-6 animate-slide-up">
-                            <div className="w-24 h-24 bg-blue-50 rounded-[32px] mx-auto flex items-center justify-center text-4xl shadow-inner">👤</div>
-                            <h3 className="text-2xl font-black uppercase">Профиль</h3>
-                            <p className="text-gray-400 text-sm">База данных загружена из облака</p>
+                    {/* MANAGE / WAREHOUSE VIEW */}
+                    {view === 'manage' && (
+                        <div className="p-6 space-y-6 animate-slide-up">
+                            <h2 className="text-3xl font-black uppercase italic text-gray-800">Управление</h2>
+                            <div className="p-8 border-2 border-dashed border-blue-200 rounded-[32px] bg-white text-center shadow-inner relative">
+                                {isUploading ? (
+                                    <p className="text-[10px] font-black uppercase text-blue-600 animate-pulse">Обработка...</p>
+                                ) : (
+                                    <label className="cursor-pointer block">
+                                        <span className="text-3xl block mb-2">📊</span>
+                                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Обновить Excel вручную</span>
+                                        <input type="file" accept=".xlsx, .xls" onChange={handleFileUpload} className="hidden" />
+                                    </label>
+                                )}
+                            </div>
                             <button 
-                                onClick={() => window.location.reload()}
-                                className="w-full py-4 bg-gray-100 rounded-2xl font-black uppercase text-[10px] text-blue-600"
+                                onClick={loadData}
+                                className="w-full py-5 bg-blue-50 text-blue-600 rounded-[24px] font-black uppercase text-[10px] tracking-widest"
                             >
-                                Обновить данные вручную
+                                Сбросить и обновить из облака
                             </button>
                         </div>
                     )}
 
-                    {/* Навигация */}
+                    {/* PROFILE VIEW */}
+                    {view === 'profile' && (
+                        <div className="p-10 text-center space-y-6 animate-slide-up">
+                            <div className="w-24 h-24 bg-blue-50 rounded-[32px] mx-auto flex items-center justify-center text-4xl shadow-inner">👤</div>
+                            <h3 className="text-2xl font-black uppercase">Профиль</h3>
+                            <p className="text-gray-400 text-sm">База загружена из облака</p>
+                            <div className="pt-10 space-y-2">
+                                <div className="p-4 bg-gray-50 rounded-2xl border text-left flex justify-between items-center">
+                                    <span className="text-[10px] font-black uppercase text-gray-400">Версия базы</span>
+                                    <span className="text-[10px] font-black">{parts.length} поз.</span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* NAVIGATION */}
                     <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-xl border-t flex justify-around py-5 px-2 z-50 rounded-t-[32px] shadow-lg">
                         {[
                             { id: 'home', icon: '🏠' },
                             { id: 'search', icon: '🔍' },
+                            { id: 'manage', icon: '📦' },
                             { id: 'profile', icon: '👤' }
                         ].map(tab => (
                             <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl transition-all ${view === tab.id ? 'scale-125 opacity-100' : 'opacity-20'}`}>
