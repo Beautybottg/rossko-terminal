@@ -50,7 +50,7 @@
         );
 
         // КОМПОНЕНТ ЗАГРУЗКИ EXCEL
-      const ExcelUpload = ({ onUpload }) => {
+     const ExcelUpload = ({ onUpload }) => {
     const [isProcessing, setIsProcessing] = useState(false);
 
     const handleFile = async (e) => {
@@ -66,32 +66,29 @@
                 const ws = workbook.Sheets[workbook.SheetNames[0]];
                 const jsonData = XLSX.utils.sheet_to_json(ws);
 
-                // Преобразуем данные, приводя ключи к нижнему регистру (на случай "Name" вместо "name")
                 const formatted = jsonData.map((item, i) => {
-                    // Создаем копию объекта с ключами в нижнем регистре без пробелов
-                    const cleanItem = {};
-                    Object.keys(item).forEach(key => {
-                        cleanItem[key.trim().toLowerCase()] = item[key];
-                    });
+                    const clean = {};
+                    // Приводим все ключи к нижнему регистру для стабильности
+                    Object.keys(item).forEach(k => clean[k.trim().toLowerCase()] = item[k]);
 
                     return {
-                        id: cleanItem.id || Date.now() + i,
-                        name: String(cleanItem.name || "Без названия"),
-                        brand: String(cleanItem.brand || "—"),
-                        article: String(cleanItem.article || "—"),
-                        price: parseFloat(String(cleanItem.price).replace(/[^0-9.]/g, '')) || 0,
-                        category: String(cleanItem.category || "Прочее"),
-                        imageUrl: String(cleanItem.imageurl || 'https://via.placeholder.com/150'),
-                        isEssential: String(cleanItem.isessential).toUpperCase() === 'TRUE'
+                        id: clean.id || Date.now() + i,
+                        name: String(clean.name || "Без названия"),
+                        brand: String(clean.brand || "—"),
+                        article: String(clean.article || "—"),
+                        price: parseFloat(String(clean.price).replace(/[^0-9.]/g, '')) || 0,
+                        category: String(clean.category || "Прочее"),
+                        imageUrl: String(clean.imageurl || ''),
+                        isEssential: String(clean.isessential).toUpperCase() === 'TRUE'
                     };
                 });
 
                 onUpload(formatted);
+                // Сохраняем в память телефона
                 localStorage.setItem('rossko_db', JSON.stringify(formatted));
-                alert("База успешно обновлена!");
+                alert(`Успех! Загружено позиций: ${formatted.length}`);
             } catch (err) {
-                console.error(err);
-                alert("Ошибка файла. Проверьте заголовки в первой строке Excel.");
+                alert("Ошибка! Проверьте формат Excel.");
             } finally {
                 setIsProcessing(false);
                 e.target.value = '';
@@ -101,13 +98,13 @@
     };
 
     return (
-        <div className="p-8 border-2 border-dashed border-blue-200 rounded-[32px] bg-blue-50/30 text-center">
+        <div className="p-8 border-2 border-dashed border-blue-100 rounded-[32px] bg-blue-50/20 text-center">
             {isProcessing ? (
-                <p className="text-[10px] font-black animate-pulse text-[#0054a6]">ОБРАБОТКА ТАБЛИЦЫ...</p>
+                <div className="animate-pulse text-[10px] font-black text-[#0054a6]">СИНХРОНИЗАЦИЯ...</div>
             ) : (
-                <label className="flex flex-col items-center cursor-pointer">
-                    <span className="text-3xl mb-2">📊</span>
-                    <span className="text-[10px] font-black text-[#0054a6] uppercase tracking-tighter">Загрузить товары (Excel)</span>
+                <label className="cursor-pointer block">
+                    <div className="text-2xl mb-2">📥</div>
+                    <span className="text-[10px] font-black text-[#0054a6] uppercase tracking-widest">Обновить базу Excel</span>
                     <input type="file" accept=".xlsx, .xls" onChange={handleFile} className="hidden" />
                 </label>
             )}
@@ -315,6 +312,7 @@
     </script>
 </body>
 </html>
+
 
 
 
