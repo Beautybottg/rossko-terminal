@@ -66,53 +66,51 @@
                 const data = new Uint8Array(evt.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
                 const ws = workbook.Sheets[workbook.SheetNames[0]];
-                
-                // Читаем данные как массив массивов, чтобы не зависеть от названий колонок
-                const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
-                
-                // Пропускаем первую строку (заголовки) и формируем объекты
-                const formatted = rows.slice(1).map((row, i) => {
-                    if (!row[0]) return null; // Пропуск пустых строк
-                    return {
-                        id: Date.now() + i,
-                        name: String(row[0] || "Без названия"),    // 1-я колонка
-                        price: parseFloat(String(row[1]).replace(/[^0-9.]/g, '')) || 0, // 2-я колонка
-                        brand: String(row[2] || "Rossko"),         // 3-я колонка
-                        article: String(row[3] || "—"),           // 4-я колонка
-                        category: String(row[4] || "Прочее"),      // 5-я колонка
-                        isEssential: String(row[5]).toLowerCase() === 'true' // 6-я колонка
-                    };
-                }).filter(Boolean);
+                const jsonData = XLSX.utils.sheet_to_json(ws);
 
-                if (formatted.length === 0) throw new Error("Нет данных");
+                // Преобразуем данные, приводя ключи к нижнему регистру (на случай "Name" вместо "name")
+                const formatted = jsonData.map((item, i) => {
+                    // Создаем копию объекта с ключами в нижнем регистре без пробелов
+                    const cleanItem = {};
+                    Object.keys(item).forEach(key => {
+                        cleanItem[key.trim().toLowerCase()] = item[key];
+                    });
+
+                    return {
+                        id: cleanItem.id || Date.now() + i,
+                        name: String(cleanItem.name || "Без названия"),
+                        brand: String(cleanItem.brand || "—"),
+                        article: String(cleanItem.article || "—"),
+                        price: parseFloat(String(cleanItem.price).replace(/[^0-9.]/g, '')) || 0,
+                        category: String(cleanItem.category || "Прочее"),
+                        imageUrl: String(cleanItem.imageurl || 'https://via.placeholder.com/150'),
+                        isEssential: String(cleanItem.isessential).toUpperCase() === 'TRUE'
+                    };
+                });
 
                 onUpload(formatted);
                 localStorage.setItem('rossko_db', JSON.stringify(formatted));
-                alert(`Успешно загружено ${formatted.length} товаров`);
-                
+                alert("База успешно обновлена!");
             } catch (err) {
                 console.error(err);
-                alert("Ошибка! Убедитесь, что в Excel колонки идут по порядку: Название, Цена, Бренд, Артикул...");
+                alert("Ошибка файла. Проверьте заголовки в первой строке Excel.");
             } finally {
                 setIsProcessing(false);
-                e.target.value = ''; // Сброс инпута
+                e.target.value = '';
             }
         };
         reader.readAsArrayBuffer(file);
     };
 
     return (
-        <div className="p-6 border-2 border-dashed border-blue-200 rounded-[24px] bg-blue-50/50 text-center">
+        <div className="p-8 border-2 border-dashed border-blue-200 rounded-[32px] bg-blue-50/30 text-center">
             {isProcessing ? (
-                <div className="flex flex-col items-center gap-2">
-                    <div className="w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                    <p className="text-[10px] font-black uppercase text-[#0054a6]">Обработка базы...</p>
-                </div>
+                <p className="text-[10px] font-black animate-pulse text-[#0054a6]">ОБРАБОТКА ТАБЛИЦЫ...</p>
             ) : (
-                <label className="cursor-pointer">
-                    <span className="text-[10px] font-black text-[#0054a6] uppercase tracking-widest">Загрузить Excel</span>
+                <label className="flex flex-col items-center cursor-pointer">
+                    <span className="text-3xl mb-2">📊</span>
+                    <span className="text-[10px] font-black text-[#0054a6] uppercase tracking-tighter">Загрузить товары (Excel)</span>
                     <input type="file" accept=".xlsx, .xls" onChange={handleFile} className="hidden" />
-                    <p className="text-[9px] text-gray-400 mt-2 italic">Порядок: Имя, Цена, Бренд, Артикул</p>
                 </label>
             )}
         </div>
@@ -319,5 +317,6 @@
     </script>
 </body>
 </html>
+
 
 
