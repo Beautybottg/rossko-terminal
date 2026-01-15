@@ -5,22 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Rossko Terminal</title>
     
-    <link rel="manifest" href="./manifest.json">
-    <link rel="icon" type="image/png" href="./logo192.png">
-    <link rel="apple-touch-icon" href="./logo192.png">
-    <meta name="theme-color" content="#0054a6">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="logo192.png">
+    <link rel="apple-touch-icon" href="logo192.png">
+    
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { 
+            font-family: 'Inter', -apple-system, sans-serif; 
+            -webkit-tap-highlight-color: transparent;
+            background-color: #f9fafb; /* Принудительный фон для iOS */
+        }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .animate-slide-up { animation: slideUp 0.3s ease-out; }
         @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
@@ -32,15 +36,14 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        const ITEMS_PER_PAGE = 20;
+        const ITEMS_PER_PAGE = 25;
         const CATEGORIES = ['Все', 'Масла', 'Фильтры', 'Тормоза', 'Подвеска', 'Прочее'];
         
-        // База "заглушка"
         const DEFAULT_PARTS = [
-            { id: 0, name: 'База пуста. Загрузите Excel в разделе склад.', price: 0, brand: 'SYSTEM', article: '000', category: 'Прочее', isEssential: false }
+            { id: 0, name: 'База пуста. Загрузите Excel.', price: 0, brand: 'SYSTEM', article: '000', category: 'Прочее', isEssential: false }
         ];
 
-        // --- КОМПОНЕНТ ЗАГРУЗКИ ---
+        // --- КОМПОНЕНТ ЗАГРУЗКИ (ИСПРАВЛЕН ДЛЯ ПК И iOS) ---
         const ExcelUpload = ({ onUpload }) => {
             const [isProcessing, setIsProcessing] = useState(false);
 
@@ -53,12 +56,14 @@
                 reader.onload = (evt) => {
                     try {
                         const data = new Uint8Array(evt.target.result);
+                        // readAsArrayBuffer + XLSX.read(data, {type: 'array'}) — самый стабильный метод для всех ОС
                         const workbook = XLSX.read(data, { type: 'array' });
                         const ws = workbook.Sheets[workbook.SheetNames[0]];
                         const jsonData = XLSX.utils.sheet_to_json(ws);
 
                         const formatted = jsonData.map((item, i) => {
                             const clean = {};
+                            // Очистка заголовков от мусора и пробелов
                             Object.keys(item).forEach(k => clean[k.trim().toLowerCase()] = item[k]);
 
                             return {
@@ -77,7 +82,7 @@
                         localStorage.setItem('rossko_db', JSON.stringify(formatted));
                         alert(`Успешно! Загружено ${formatted.length} позиций.`);
                     } catch (err) {
-                        alert("Ошибка разбора файла. Проверьте формат!");
+                        alert("Ошибка! Проверьте, что в Excel есть колонки name, price, brand, article.");
                     } finally {
                         setIsProcessing(false);
                         e.target.value = '';
@@ -87,16 +92,16 @@
             };
 
             return (
-                <div className="p-8 border-2 border-dashed border-blue-200 rounded-[32px] bg-blue-50/30 text-center">
+                <div className="p-8 border-2 border-dashed border-blue-200 rounded-[32px] bg-white text-center shadow-inner">
                     {isProcessing ? (
                         <div className="flex flex-col items-center gap-2">
                             <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                            <p className="text-[10px] font-black uppercase text-[#0054a6]">Синхронизация...</p>
+                            <p className="text-[10px] font-black uppercase text-blue-600">Загрузка данных...</p>
                         </div>
                     ) : (
-                        <label className="cursor-pointer">
-                            <span className="text-2xl block mb-2">📥</span>
-                            <span className="text-[10px] font-black text-[#0054a6] uppercase tracking-tighter">Загрузить Excel базу</span>
+                        <label className="cursor-pointer block">
+                            <span className="text-3xl block mb-2">📊</span>
+                            <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Выбрать файл Excel</span>
                             <input type="file" accept=".xlsx, .xls" onChange={handleFile} className="hidden" />
                         </label>
                     )}
@@ -104,18 +109,17 @@
             );
         };
 
-        // --- ГЛАВНЫЙ МАКЕТ ---
         const Layout = ({ children, activeView, setView }) => (
-            <div className="max-w-md mx-auto min-h-screen pb-24 relative bg-white shadow-xl">
+            <div className="max-w-md mx-auto min-h-screen pb-24 relative bg-white shadow-2xl overflow-hidden">
                 {children}
-                <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t flex justify-around py-4 px-2 z-50">
+                <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-xl border-t flex justify-around py-5 px-2 z-50 rounded-t-[32px] shadow-lg">
                     {[
                         { id: 'home', icon: '🏠' },
                         { id: 'search', icon: '🔍' },
                         { id: 'manage', icon: '📦' },
                         { id: 'profile', icon: '👤' }
                     ].map(tab => (
-                        <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl transition-all ${activeView === tab.id ? 'scale-125 opacity-100' : 'opacity-30'}`}>
+                        <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl transition-all duration-300 ${activeView === tab.id ? 'scale-125 opacity-100' : 'opacity-20'}`}>
                             {tab.icon}
                         </button>
                     ))}
@@ -123,7 +127,6 @@
             </div>
         );
 
-        // --- ПРИЛОЖЕНИЕ ---
         const App = () => {
             const [parts, setParts] = useState(() => {
                 const saved = localStorage.getItem('rossko_db');
@@ -135,7 +138,7 @@
             const [editingPart, setEditingPart] = useState(null);
 
             const filtered = useMemo(() => {
-                const q = searchQuery.toLowerCase();
+                const q = searchQuery.toLowerCase().trim();
                 return parts.filter(p => 
                     (p.name.toLowerCase().includes(q) || p.article.toLowerCase().includes(q)) &&
                     (activeCategory === 'Все' || p.category === activeCategory)
@@ -145,23 +148,23 @@
             return (
                 <Layout activeView={view} setView={setView}>
                     {view === 'home' && (
-                        <div className="p-6 space-y-8">
+                        <div className="p-6 space-y-8 animate-slide-up">
                             <div className="pt-4">
-                                <p className="text-[10px] font-black uppercase text-blue-600 mb-1">Rossko Terminal</p>
-                                <h1 className="text-3xl font-black italic uppercase">Главная</h1>
+                                <p className="text-[10px] font-black uppercase text-blue-600 mb-1 tracking-widest">Rossko Terminal</p>
+                                <h1 className="text-4xl font-black italic uppercase text-gray-800 leading-none">Складской<br/>Учет</h1>
                             </div>
-                            <div className="bg-gray-100 p-4 rounded-2xl flex items-center gap-3" onClick={() => setView('search')}>
-                                <span>🔍</span>
-                                <span className="text-gray-400 font-bold text-sm">Быстрый поиск...</span>
+                            <div className="bg-gray-50 border p-5 rounded-3xl flex items-center gap-4 shadow-sm" onClick={() => setView('search')}>
+                                <span className="text-xl">🔍</span>
+                                <span className="text-gray-400 font-bold text-sm">Найти деталь по артикулу...</span>
                             </div>
                             <div>
-                                <h2 className="text-xs font-black uppercase mb-4 tracking-widest text-gray-400">Популярное</h2>
-                                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                                    {parts.slice(0, 5).map(p => (
-                                        <div key={p.id} className="min-w-[140px] bg-white border rounded-3xl p-4 shadow-sm">
-                                            <div className="h-20 bg-gray-50 rounded-2xl mb-3 flex items-center justify-center text-2xl">📦</div>
-                                            <p className="text-[10px] font-bold line-clamp-2 h-8">{p.name}</p>
-                                            <p className="text-blue-600 font-black mt-2">{p.price} ₽</p>
+                                <h2 className="text-[10px] font-black uppercase mb-4 tracking-[0.2em] text-gray-300">Последние поступления</h2>
+                                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4">
+                                    {parts.slice(-5).reverse().map(p => (
+                                        <div key={p.id} className="min-w-[160px] bg-white border rounded-[32px] p-5 shadow-sm active:scale-95 transition-transform">
+                                            <div className="h-24 bg-gray-50 rounded-2xl mb-4 flex items-center justify-center text-3xl">📦</div>
+                                            <p className="text-[10px] font-bold line-clamp-2 h-8 text-gray-800 leading-tight">{p.name}</p>
+                                            <p className="text-blue-600 font-black mt-3 text-lg">{p.price} ₽</p>
                                         </div>
                                     ))}
                                 </div>
@@ -170,88 +173,100 @@
                     )}
 
                     {view === 'search' && (
-                        <div className="p-4 space-y-4">
+                        <div className="p-4 space-y-4 animate-slide-up">
                             <input 
-                                className="w-full bg-gray-100 p-4 rounded-2xl font-bold outline-none focus:ring-2 ring-blue-500"
-                                placeholder="Артикул или название..."
+                                className="w-full bg-gray-50 border-2 border-gray-100 p-5 rounded-[24px] font-bold outline-none focus:border-blue-500 transition-all text-lg shadow-inner"
+                                placeholder="Введите артикул..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                autoFocus
                             />
-                            <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                            <div className="flex gap-2 overflow-x-auto no-scrollbar py-2">
                                 {CATEGORIES.map(c => (
-                                    <button key={c} onClick={() => setActiveCategory(c)} className={`px-4 py-2 rounded-full text-[10px] font-black uppercase whitespace-nowrap ${activeCategory === c ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                                    <button key={c} onClick={() => setActiveCategory(c)} className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase whitespace-nowrap transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-white border text-gray-400'}`}>
                                         {c}
                                     </button>
                                 ))}
                             </div>
-                            <div className="space-y-3">
+                            <div className="space-y-3 pb-10">
                                 {filtered.map(p => (
-                                    <div key={p.id} onClick={() => setEditingPart(p)} className="bg-white border p-4 rounded-2xl flex justify-between items-center active:bg-gray-50">
-                                        <div>
-                                            <p className="text-sm font-bold leading-tight">{p.name}</p>
-                                            <p className="text-[10px] font-mono text-gray-400 mt-1 uppercase">{p.brand} | {p.article}</p>
-                                            <p className="text-lg font-black mt-1 text-blue-700">{p.price} ₽</p>
+                                    <div key={p.id} onClick={() => setEditingPart(p)} className="bg-white border p-5 rounded-[28px] flex justify-between items-center active:bg-gray-50 shadow-sm transition-colors">
+                                        <div className="flex-1 pr-4">
+                                            <p className="text-[10px] font-black text-blue-600 uppercase mb-1">{p.brand}</p>
+                                            <p className="text-sm font-bold leading-tight text-gray-800">{p.name}</p>
+                                            <p className="text-[10px] font-mono text-gray-400 mt-2 bg-gray-50 inline-block px-2 py-1 rounded">АРТ: {p.article}</p>
+                                            <p className="text-xl font-black mt-2 text-gray-900">{p.price} ₽</p>
                                         </div>
-                                        <div className="text-gray-300">→</div>
+                                        <div className="bg-blue-50 w-10 h-10 rounded-full flex items-center justify-center text-blue-600 font-black">→</div>
                                     </div>
                                 ))}
+                                {filtered.length === 0 && <p className="text-center py-20 text-gray-300 font-black uppercase text-xs">Ничего не найдено</p>}
                             </div>
                         </div>
                     )}
 
                     {view === 'manage' && (
-                        <div className="p-6 space-y-6">
-                            <h2 className="text-2xl font-black uppercase italic">Склад</h2>
+                        <div className="p-6 space-y-6 animate-slide-up">
+                            <h2 className="text-3xl font-black uppercase italic text-gray-800">Склад</h2>
                             <ExcelUpload onUpload={setParts} />
-                            <div className="bg-blue-600 rounded-[32px] p-8 text-white shadow-lg">
-                                <p className="text-[10px] font-black uppercase opacity-60">Всего в базе</p>
-                                <p className="text-4xl font-black">{parts.length}</p>
-                                <button 
-                                    onClick={() => { if(confirm('Очистить базу?')) { setParts(DEFAULT_PARTS); localStorage.removeItem('rossko_db'); }}}
-                                    className="mt-6 text-[10px] font-black uppercase opacity-40 hover:opacity-100"
-                                >
-                                    Сбросить данные
-                                </button>
+                            <div className="bg-blue-600 rounded-[40px] p-10 text-white shadow-2xl relative overflow-hidden">
+                                <p className="text-[10px] font-black uppercase opacity-60 tracking-[0.3em]">База данных</p>
+                                <p className="text-6xl font-black mt-2 tracking-tighter">{parts.length}</p>
+                                <p className="text-[12px] font-bold opacity-80 mt-1 uppercase">Позиций загружено</p>
+                                <div className="absolute -right-10 -bottom-10 text-white opacity-10 text-[120px] font-black italic">R</div>
                             </div>
+                            <button 
+                                onClick={() => { if(confirm('Очистить всю базу?')) { setParts(DEFAULT_PARTS); localStorage.removeItem('rossko_db'); }}}
+                                className="w-full py-4 text-[10px] font-black uppercase text-gray-300 tracking-widest"
+                            >
+                                Удалить все данные
+                            </button>
                         </div>
                     )}
 
                     {view === 'profile' && (
-                        <div className="p-10 text-center space-y-4">
-                            <div className="w-24 h-24 bg-blue-100 rounded-full mx-auto flex items-center justify-center text-4xl">👤</div>
-                            <h3 className="text-xl font-black">Администратор</h3>
-                            <p className="text-gray-400 text-sm">Терминал готов к работе</p>
+                        <div className="p-10 text-center space-y-6 animate-slide-up">
+                            <div className="w-32 h-32 bg-blue-50 rounded-[48px] mx-auto flex items-center justify-center text-5xl shadow-inner">👤</div>
+                            <div>
+                                <h3 className="text-2xl font-black uppercase">Менеджер</h3>
+                                <p className="text-gray-400 text-sm font-medium mt-1">Авторизован в Rossko Terminal</p>
+                            </div>
+                            <div className="pt-10">
+                                <div className="p-4 bg-gray-50 rounded-2xl border text-left flex items-center justify-between">
+                                    <span className="text-[10px] font-black uppercase text-gray-400">Версия ПО</span>
+                                    <span className="text-[10px] font-black">2026.1.15</span>
+                                </div>
+                            </div>
                         </div>
                     )}
 
                     {editingPart && (
-                        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 backdrop-blur-sm p-4">
-                            <div className="w-full max-w-md bg-white rounded-[40px] p-8 animate-slide-up shadow-2xl">
-                                <h3 className="font-black uppercase mb-6 text-center tracking-widest">Параметры товара</h3>
-                                <div className="space-y-4 mb-8">
-                                    <div className="bg-gray-50 p-4 rounded-2xl border">
-                                        <p className="text-[10px] font-black uppercase text-gray-400 mb-1">Название</p>
-                                        <p className="font-bold text-sm leading-tight">{editingPart.name}</p>
+                        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-md p-4">
+                            <div className="w-full max-w-md bg-white rounded-[48px] p-10 animate-slide-up shadow-2xl">
+                                <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-8"></div>
+                                <h3 className="font-black uppercase mb-8 text-xl text-gray-800">Редактирование</h3>
+                                <div className="space-y-6 mb-10">
+                                    <div className="bg-gray-50 p-5 rounded-3xl border border-gray-100">
+                                        <p className="text-[10px] font-black uppercase text-gray-400 mb-2">Название позиции</p>
+                                        <p className="font-bold text-sm leading-tight text-gray-800">{editingPart.name}</p>
                                     </div>
-                                    <div className="bg-gray-50 p-4 rounded-2xl border">
-                                        <p className="text-[10px] font-black uppercase text-gray-400 mb-1">Новая цена</p>
+                                    <div className="bg-white p-5 rounded-3xl border-2 border-blue-100 shadow-lg shadow-blue-50">
+                                        <p className="text-[10px] font-black uppercase text-blue-600 mb-2">Цена продажи (₽)</p>
                                         <input 
                                             type="number" 
-                                            className="bg-transparent w-full text-2xl font-black text-blue-600 outline-none" 
+                                            className="bg-transparent w-full text-4xl font-black text-gray-900 outline-none" 
                                             value={editingPart.price}
                                             onChange={e => setEditingPart({...editingPart, price: Number(e.target.value)})}
                                         />
                                     </div>
                                 </div>
-                                <div className="flex gap-3">
-                                    <button onClick={() => setEditingPart(null)} className="flex-1 py-4 bg-gray-100 rounded-2xl font-black uppercase text-[10px]">Отмена</button>
+                                <div className="flex gap-4">
+                                    <button onClick={() => setEditingPart(null)} className="flex-1 py-5 bg-gray-100 rounded-[24px] font-black uppercase text-[10px] text-gray-400">Отмена</button>
                                     <button onClick={() => {
                                         const newParts = parts.map(p => p.id === editingPart.id ? editingPart : p);
                                         setParts(newParts);
                                         localStorage.setItem('rossko_db', JSON.stringify(newParts));
                                         setEditingPart(null);
-                                    }} className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-[10px]">Сохранить</button>
+                                    }} className="flex-1 py-5 bg-blue-600 text-white rounded-[24px] font-black uppercase text-[10px] shadow-xl shadow-blue-200">Сохранить</button>
                                 </div>
                             </div>
                         </div>
