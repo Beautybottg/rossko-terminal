@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Rossko Terminal</title>
     
     <link rel="manifest" href="./manifest.json">
@@ -17,288 +17,241 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .animate-slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    </style>
 </head>
-<body>
+<body class="bg-gray-50 text-gray-900">
     <div id="root"></div>
 
     <script type="text/babel">
-        // Достаем нужные хуки из React
         const { useState, useEffect, useMemo } = React;
 
-        // Вспомогательные данные (CATEGORIES, PARTS)
-        const CATEGORIES = ['Все', 'Масла', 'Фильтры', 'Зажигание', 'Тормозная система', 'Подвеска', 'Прочее'];
-        const PARTS = [
-            { id: 1, name: 'Бампер передний Mercedes E-Class', price: 25000, brand: 'Mercedes', article: 'A2128850025', category: 'Прочее', isEssential: true, imageUrl: 'https://via.placeholder.com/150' }
+        const ITEMS_PER_PAGE = 20;
+        const CATEGORIES = ['Все', 'Масла', 'Фильтры', 'Тормоза', 'Подвеска', 'Прочее'];
+        
+        // База "заглушка"
+        const DEFAULT_PARTS = [
+            { id: 0, name: 'База пуста. Загрузите Excel в разделе склад.', price: 0, brand: 'SYSTEM', article: '000', category: 'Прочее', isEssential: false }
         ];
 
-        const ITEMS_PER_PAGE = 20;
+        // --- КОМПОНЕНТ ЗАГРУЗКИ ---
+        const ExcelUpload = ({ onUpload }) => {
+            const [isProcessing, setIsProcessing] = useState(false);
 
-        // КОМПОНЕНТ МАКЕТА (LAYOUT)
+            const handleFile = async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setIsProcessing(true);
+
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const data = new Uint8Array(evt.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const ws = workbook.Sheets[workbook.SheetNames[0]];
+                        const jsonData = XLSX.utils.sheet_to_json(ws);
+
+                        const formatted = jsonData.map((item, i) => {
+                            const clean = {};
+                            Object.keys(item).forEach(k => clean[k.trim().toLowerCase()] = item[k]);
+
+                            return {
+                                id: clean.id || Date.now() + i,
+                                name: String(clean.name || "Без названия"),
+                                brand: String(clean.brand || "Rossko"),
+                                article: String(clean.article || "—"),
+                                price: parseFloat(String(clean.price).replace(/[^0-9.]/g, '')) || 0,
+                                category: String(clean.category || "Прочее"),
+                                imageUrl: String(clean.imageurl || ''),
+                                isEssential: String(clean.isessential).toUpperCase() === 'TRUE'
+                            };
+                        });
+
+                        onUpload(formatted);
+                        localStorage.setItem('rossko_db', JSON.stringify(formatted));
+                        alert(`Успешно! Загружено ${formatted.length} позиций.`);
+                    } catch (err) {
+                        alert("Ошибка разбора файла. Проверьте формат!");
+                    } finally {
+                        setIsProcessing(false);
+                        e.target.value = '';
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            };
+
+            return (
+                <div className="p-8 border-2 border-dashed border-blue-200 rounded-[32px] bg-blue-50/30 text-center">
+                    {isProcessing ? (
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                            <p className="text-[10px] font-black uppercase text-[#0054a6]">Синхронизация...</p>
+                        </div>
+                    ) : (
+                        <label className="cursor-pointer">
+                            <span className="text-2xl block mb-2">📥</span>
+                            <span className="text-[10px] font-black text-[#0054a6] uppercase tracking-tighter">Загрузить Excel базу</span>
+                            <input type="file" accept=".xlsx, .xls" onChange={handleFile} className="hidden" />
+                        </label>
+                    )}
+                </div>
+            );
+        };
+
+        // --- ГЛАВНЫЙ МАКЕТ ---
         const Layout = ({ children, activeView, setView }) => (
-            <div className="max-w-md mx-auto min-h-screen pb-24 relative bg-gray-50 flex flex-col shadow-2xl">
-                <header className="bg-[#0054a6] p-4 text-white flex justify-between items-center shadow-md">
-                   <div className="font-black italic uppercase text-lg">Rossko Terminal</div>
-                </header>
-                <div className="flex-1">{children}</div>
-                <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-lg border-t flex justify-around py-4 z-[90] shadow-[0_-5px_15px_rgba(0,0,0,0.05)]">
-                    <button onClick={() => setView('home')} className={`text-xl ${activeView === 'home' ? 'text-[#0054a6]' : 'text-gray-300'}`}>🏠</button>
-                    <button onClick={() => setView('search')} className={`text-xl ${activeView === 'search' ? 'text-[#0054a6]' : 'text-gray-300'}`}>🔍</button>
-                    <button onClick={() => setView('manage')} className={`text-xl ${activeView === 'manage' ? 'text-[#0054a6]' : 'text-gray-300'}`}>📦</button>
-                    <button onClick={() => setView('profile')} className={`text-xl ${activeView === 'profile' ? 'text-[#0054a6]' : 'text-gray-300'}`}>👤</button>
+            <div className="max-w-md mx-auto min-h-screen pb-24 relative bg-white shadow-xl">
+                {children}
+                <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t flex justify-around py-4 px-2 z-50">
+                    {[
+                        { id: 'home', icon: '🏠' },
+                        { id: 'search', icon: '🔍' },
+                        { id: 'manage', icon: '📦' },
+                        { id: 'profile', icon: '👤' }
+                    ].map(tab => (
+                        <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl transition-all ${activeView === tab.id ? 'scale-125 opacity-100' : 'opacity-30'}`}>
+                            {tab.icon}
+                        </button>
+                    ))}
                 </nav>
             </div>
         );
 
-        // КОМПОНЕНТ ЗАГРУЗКИ EXCEL
-     const ExcelUpload = ({ onUpload }) => {
-    const [isProcessing, setIsProcessing] = useState(false);
-
-    const handleFile = async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        setIsProcessing(true);
-
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-            try {
-                const data = new Uint8Array(evt.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
-                const ws = workbook.Sheets[workbook.SheetNames[0]];
-                const jsonData = XLSX.utils.sheet_to_json(ws);
-
-                const formatted = jsonData.map((item, i) => {
-                    const clean = {};
-                    // Приводим все ключи к нижнему регистру для стабильности
-                    Object.keys(item).forEach(k => clean[k.trim().toLowerCase()] = item[k]);
-
-                    return {
-                        id: clean.id || Date.now() + i,
-                        name: String(clean.name || "Без названия"),
-                        brand: String(clean.brand || "—"),
-                        article: String(clean.article || "—"),
-                        price: parseFloat(String(clean.price).replace(/[^0-9.]/g, '')) || 0,
-                        category: String(clean.category || "Прочее"),
-                        imageUrl: String(clean.imageurl || ''),
-                        isEssential: String(clean.isessential).toUpperCase() === 'TRUE'
-                    };
-                });
-
-                onUpload(formatted);
-                // Сохраняем в память телефона
-                localStorage.setItem('rossko_db', JSON.stringify(formatted));
-                alert(`Успех! Загружено позиций: ${formatted.length}`);
-            } catch (err) {
-                alert("Ошибка! Проверьте формат Excel.");
-            } finally {
-                setIsProcessing(false);
-                e.target.value = '';
-            }
-        };
-        reader.readAsArrayBuffer(file);
-    };
-
-    return (
-        <div className="p-8 border-2 border-dashed border-blue-100 rounded-[32px] bg-blue-50/20 text-center">
-            {isProcessing ? (
-                <div className="animate-pulse text-[10px] font-black text-[#0054a6]">СИНХРОНИЗАЦИЯ...</div>
-            ) : (
-                <label className="cursor-pointer block">
-                    <div className="text-2xl mb-2">📥</div>
-                    <span className="text-[10px] font-black text-[#0054a6] uppercase tracking-widest">Обновить базу Excel</span>
-                    <input type="file" accept=".xlsx, .xls" onChange={handleFile} className="hidden" />
-                </label>
-            )}
-        </div>
-    );
-};
-
-        // ОСНОВНОЙ КОМПОНЕНТ APP
-     const App = () => {
-            // Загружаем базу из памяти или используем дефолтный массив
+        // --- ПРИЛОЖЕНИЕ ---
+        const App = () => {
             const [parts, setParts] = useState(() => {
                 const saved = localStorage.getItem('rossko_db');
-                try {
-                    return saved ? JSON.parse(saved) : PARTS;
-                } catch (e) {
-                    return PARTS;
-                }
+                return saved ? JSON.parse(saved) : DEFAULT_PARTS;
             });
-
             const [view, setView] = useState('home');
             const [searchQuery, setSearchQuery] = useState('');
             const [activeCategory, setActiveCategory] = useState('Все');
             const [editingPart, setEditingPart] = useState(null);
-            const [currentPage, setCurrentPage] = useState(1);
-            const [isLoggedIn, setIsLoggedIn] = useState(false);
-            const [authMode, setAuthMode] = useState('login');
-            const [user, setUser] = useState({ name: '', phone: '', balance: 5000 });
 
-            // Сохраняем базу в LocalStorage каждый раз, когда массив parts меняется
-            useEffect(() => {
-                if (parts !== PARTS) {
-                    localStorage.setItem('rossko_db', JSON.stringify(parts));
-                }
-            }, [parts]);
-
-            useEffect(() => { setCurrentPage(1); }, [searchQuery, activeCategory]);
-
-            const allFilteredParts = useMemo(() => {
-                const query = searchQuery.toLowerCase().trim();
-                const words = query.split(/\s+/).filter(w => w);
-                const firstWord = words[0] || "";
-                
-                const filtered = parts.filter(p => {
-                    const matchesWords = words.every(w => 
-                        p.name.toLowerCase().includes(w) || 
-                        p.article.toLowerCase().includes(w)
-                    );
-                    const matchesCat = activeCategory === 'Все' || p.category === activeCategory;
-                    return matchesWords && matchesCat;
-                });
-
-                return filtered.sort((a, b) => {
-                    const startsA = a.name.toLowerCase().startsWith(firstWord);
-                    const startsB = b.name.toLowerCase().startsWith(firstWord);
-                    if (startsA && !startsB) return -1;
-                    if (!startsA && startsB) return 1;
-                    return a.name.localeCompare(b.name);
-                });
+            const filtered = useMemo(() => {
+                const q = searchQuery.toLowerCase();
+                return parts.filter(p => 
+                    (p.name.toLowerCase().includes(q) || p.article.toLowerCase().includes(q)) &&
+                    (activeCategory === 'Все' || p.category === activeCategory)
+                );
             }, [parts, searchQuery, activeCategory]);
-
-            const totalPages = Math.ceil(allFilteredParts.length / ITEMS_PER_PAGE);
-            const paginatedParts = allFilteredParts.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
             return (
                 <Layout activeView={view} setView={setView}>
                     {view === 'home' && (
-                        <div className="space-y-6 px-6 pt-6">
-                            <input 
-                                className="w-full bg-white border-2 border-gray-100 rounded-2xl py-4 px-6 text-sm font-bold shadow-sm outline-none"
-                                placeholder="Поиск..."
-                                onFocus={() => setView('search')}
-                            />
-                            <h2 className="text-lg font-black uppercase italic text-gray-800">Часто покупают</h2>
-                            <div className="flex space-x-4 overflow-x-auto pb-4 no-scrollbar">
-                                {parts.filter(p => p.isEssential).map(p => (
-                                    <div key={p.id} onClick={() => setEditingPart(p)} className="min-w-[150px] bg-white p-4 rounded-2xl border shadow-sm active:scale-95 transition-transform">
-                                        <div className="h-20 bg-gray-50 rounded-xl mb-2 flex items-center justify-center text-3xl">📦</div>
-                                        <h3 className="text-[10px] font-bold h-8 line-clamp-2 text-gray-900">{p.name}</h3>
-                                        <p className="text-[#0054a6] font-black text-sm mt-1">{p.price}₽</p>
-                                    </div>
-                                ))}
+                        <div className="p-6 space-y-8">
+                            <div className="pt-4">
+                                <p className="text-[10px] font-black uppercase text-blue-600 mb-1">Rossko Terminal</p>
+                                <h1 className="text-3xl font-black italic uppercase">Главная</h1>
+                            </div>
+                            <div className="bg-gray-100 p-4 rounded-2xl flex items-center gap-3" onClick={() => setView('search')}>
+                                <span>🔍</span>
+                                <span className="text-gray-400 font-bold text-sm">Быстрый поиск...</span>
+                            </div>
+                            <div>
+                                <h2 className="text-xs font-black uppercase mb-4 tracking-widest text-gray-400">Популярное</h2>
+                                <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+                                    {parts.slice(0, 5).map(p => (
+                                        <div key={p.id} className="min-w-[140px] bg-white border rounded-3xl p-4 shadow-sm">
+                                            <div className="h-20 bg-gray-50 rounded-2xl mb-3 flex items-center justify-center text-2xl">📦</div>
+                                            <p className="text-[10px] font-bold line-clamp-2 h-8">{p.name}</p>
+                                            <p className="text-blue-600 font-black mt-2">{p.price} ₽</p>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     )}
 
                     {view === 'search' && (
-                        <div className="px-4 py-4 space-y-4">
+                        <div className="p-4 space-y-4">
                             <input 
-                                className="w-full border-2 border-gray-200 rounded-xl py-3 px-4 text-sm font-bold outline-none focus:border-[#0054a6]"
-                                placeholder="Поиск запчастей..."
+                                className="w-full bg-gray-100 p-4 rounded-2xl font-bold outline-none focus:ring-2 ring-blue-500"
+                                placeholder="Артикул или название..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 autoFocus
                             />
-                            <div className="flex space-x-2 overflow-x-auto no-scrollbar">
-                                {CATEGORIES.map(cat => (
-                                    <button key={cat} onClick={() => setActiveCategory(cat)} className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase whitespace-nowrap transition-colors ${activeCategory === cat ? 'bg-[#0054a6] text-white' : 'bg-white text-gray-500 border'}`}>
-                                        {cat}
+                            <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                                {CATEGORIES.map(c => (
+                                    <button key={c} onClick={() => setActiveCategory(c)} className={`px-4 py-2 rounded-full text-[10px] font-black uppercase whitespace-nowrap ${activeCategory === c ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                                        {c}
                                     </button>
                                 ))}
                             </div>
-                            <div className="grid gap-3 pb-20">
-                                {paginatedParts.map(p => (
-                                    <div key={p.id} onClick={() => setEditingPart(p)} className="bg-white p-4 rounded-2xl border shadow-sm flex items-center justify-between active:bg-gray-50">
+                            <div className="space-y-3">
+                                {filtered.map(p => (
+                                    <div key={p.id} onClick={() => setEditingPart(p)} className="bg-white border p-4 rounded-2xl flex justify-between items-center active:bg-gray-50">
                                         <div>
-                                            <h3 className="text-sm font-bold text-gray-900 leading-tight">{p.name}</h3>
-                                            <p className="text-[10px] text-gray-400 uppercase font-mono">{p.brand} | {p.article}</p>
-                                            <p className="text-lg font-black text-gray-900 mt-1">{p.price}₽</p>
+                                            <p className="text-sm font-bold leading-tight">{p.name}</p>
+                                            <p className="text-[10px] font-mono text-gray-400 mt-1 uppercase">{p.brand} | {p.article}</p>
+                                            <p className="text-lg font-black mt-1 text-blue-700">{p.price} ₽</p>
                                         </div>
-                                        <div className="text-[#0054a6] font-black">→</div>
+                                        <div className="text-gray-300">→</div>
                                     </div>
                                 ))}
-                                {allFilteredParts.length === 0 && (
-                                    <div className="text-center py-10 text-gray-400 text-xs font-bold uppercase">Ничего не найдено</div>
-                                )}
                             </div>
-                            {totalPages > 1 && (
-                                <div className="fixed bottom-20 left-0 right-0 max-w-md mx-auto px-4">
-                                    <div className="flex items-center justify-between p-2 bg-white/90 backdrop-blur shadow-lg rounded-2xl border">
-                                        <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} className={`text-[10px] font-black uppercase ${currentPage === 1 ? 'text-gray-300' : 'text-[#0054a6]'}`}>← Пред</button>
-                                        <span className="text-[10px] font-black text-gray-400">Стр {currentPage} / {totalPages}</span>
-                                        <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)} className={`text-[10px] font-black uppercase ${currentPage === totalPages ? 'text-gray-300' : 'text-[#0054a6]'}`}>След →</button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {view === 'profile' && (
-                        <div className="px-6 py-8">
-                            {!isLoggedIn ? (
-                                <div className="bg-white p-8 rounded-[32px] border shadow-sm space-y-4 text-center">
-                                    <h2 className="text-xl font-black uppercase italic text-gray-800">{authMode === 'login' ? 'Вход' : 'Регистрация'}</h2>
-                                    <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold outline-none focus:border-[#0054a6]" placeholder="Телефон" />
-                                    <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold outline-none focus:border-[#0054a6]" type="password" placeholder="Пароль" />
-                                    <button onClick={() => setIsLoggedIn(true)} className="w-full py-4 bg-[#0054a6] text-white rounded-2xl font-black uppercase text-xs shadow-lg">Продолжить</button>
-                                    <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className="text-[10px] font-black uppercase text-gray-400">Сменить режим</button>
-                                </div>
-                            ) : (
-                                <div className="space-y-6">
-                                    <div className="bg-[#0054a6] rounded-[32px] p-8 text-white shadow-xl relative overflow-hidden">
-                                        <div className="relative z-10">
-                                            <p className="text-[10px] font-black uppercase opacity-60">Профиль</p>
-                                            <h3 className="text-2xl font-bold">Клиент Rossko</h3>
-                                            <div className="mt-8">
-                                                <p className="text-[10px] font-black uppercase opacity-60">Баланс</p>
-                                                <p className="text-3xl font-black">5 000 ₽</p>
-                                            </div>
-                                        </div>
-                                        <div className="absolute -right-4 -bottom-4 text-white/10 text-9xl font-black italic">R</div>
-                                    </div>
-                                    <button onClick={() => setIsLoggedIn(false)} className="w-full py-4 text-red-500 font-black uppercase text-[10px] tracking-widest">Выйти из аккаунта</button>
-                                </div>
-                            )}
                         </div>
                     )}
 
                     {view === 'manage' && (
-                        <div className="px-6 py-6 space-y-6">
-                            <h2 className="text-xl font-black uppercase italic text-gray-800">Управление складом</h2>
+                        <div className="p-6 space-y-6">
+                            <h2 className="text-2xl font-black uppercase italic">Склад</h2>
                             <ExcelUpload onUpload={setParts} />
-                            <div className="bg-white p-6 rounded-3xl border shadow-sm text-center">
-                                <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Товаров в базе</p>
-                                <p className="text-3xl font-black text-[#0054a6]">{parts.length.toLocaleString()}</p>
+                            <div className="bg-blue-600 rounded-[32px] p-8 text-white shadow-lg">
+                                <p className="text-[10px] font-black uppercase opacity-60">Всего в базе</p>
+                                <p className="text-4xl font-black">{parts.length}</p>
+                                <button 
+                                    onClick={() => { if(confirm('Очистить базу?')) { setParts(DEFAULT_PARTS); localStorage.removeItem('rossko_db'); }}}
+                                    className="mt-6 text-[10px] font-black uppercase opacity-40 hover:opacity-100"
+                                >
+                                    Сбросить данные
+                                </button>
                             </div>
-                            <button 
-                                onClick={() => { if(confirm('Очистить базу?')) { setParts(PARTS); localStorage.removeItem('rossko_db'); } }}
-                                className="w-full py-2 text-gray-300 font-bold text-[10px] uppercase"
-                            >
-                                Сбросить базу данных
-                            </button>
+                        </div>
+                    )}
+
+                    {view === 'profile' && (
+                        <div className="p-10 text-center space-y-4">
+                            <div className="w-24 h-24 bg-blue-100 rounded-full mx-auto flex items-center justify-center text-4xl">👤</div>
+                            <h3 className="text-xl font-black">Администратор</h3>
+                            <p className="text-gray-400 text-sm">Терминал готов к работе</p>
                         </div>
                     )}
 
                     {editingPart && (
-                        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 backdrop-blur-sm p-4">
-                            <div className="w-full max-w-md bg-white rounded-[32px] p-8 shadow-2xl animate-slide-up">
-                                <h3 className="text-lg font-black uppercase mb-4 italic text-gray-800">Редактировать товар</h3>
-                                <div className="space-y-4 mb-6">
-                                    <div>
-                                        <label className="text-[10px] font-black uppercase text-gray-400 ml-2">Название</label>
-                                        <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold" value={editingPart.name} onChange={e => setEditingPart({...editingPart, name: e.target.value})} />
+                        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/40 backdrop-blur-sm p-4">
+                            <div className="w-full max-w-md bg-white rounded-[40px] p-8 animate-slide-up shadow-2xl">
+                                <h3 className="font-black uppercase mb-6 text-center tracking-widest">Параметры товара</h3>
+                                <div className="space-y-4 mb-8">
+                                    <div className="bg-gray-50 p-4 rounded-2xl border">
+                                        <p className="text-[10px] font-black uppercase text-gray-400 mb-1">Название</p>
+                                        <p className="font-bold text-sm leading-tight">{editingPart.name}</p>
                                     </div>
-                                    <div>
-                                        <label className="text-[10px] font-black uppercase text-gray-400 ml-2">Цена (₽)</label>
-                                        <input className="w-full bg-gray-50 p-4 rounded-2xl border font-bold text-lg text-[#0054a6]" type="number" value={editingPart.price} onChange={e => setEditingPart({...editingPart, price: Number(e.target.value)})} />
+                                    <div className="bg-gray-50 p-4 rounded-2xl border">
+                                        <p className="text-[10px] font-black uppercase text-gray-400 mb-1">Новая цена</p>
+                                        <input 
+                                            type="number" 
+                                            className="bg-transparent w-full text-2xl font-black text-blue-600 outline-none" 
+                                            value={editingPart.price}
+                                            onChange={e => setEditingPart({...editingPart, price: Number(e.target.value)})}
+                                        />
                                     </div>
                                 </div>
-                                <div className="flex gap-4">
-                                    <button onClick={() => setEditingPart(null)} className="flex-1 py-4 bg-gray-100 rounded-2xl font-black uppercase text-xs text-gray-500">Отмена</button>
+                                <div className="flex gap-3">
+                                    <button onClick={() => setEditingPart(null)} className="flex-1 py-4 bg-gray-100 rounded-2xl font-black uppercase text-[10px]">Отмена</button>
                                     <button onClick={() => {
-                                        setParts(prev => prev.map(p => p.id === editingPart.id ? editingPart : p));
+                                        const newParts = parts.map(p => p.id === editingPart.id ? editingPart : p);
+                                        setParts(newParts);
+                                        localStorage.setItem('rossko_db', JSON.stringify(newParts));
                                         setEditingPart(null);
-                                    }} className="flex-1 py-4 bg-[#0054a6] text-white rounded-2xl font-black uppercase text-xs shadow-lg shadow-blue-200">Сохранить</button>
+                                    }} className="flex-1 py-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-[10px]">Сохранить</button>
                                 </div>
                             </div>
                         </div>
@@ -312,9 +265,3 @@
     </script>
 </body>
 </html>
-
-
-
-
-
-
