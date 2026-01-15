@@ -15,6 +15,8 @@
         body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #f9fafb; margin: 0; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .active-tab { color: #2563eb !important; opacity: 1 !important; }
+        .animate-fade { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body>
@@ -24,22 +26,28 @@
         const CATEGORIES = ['ВСЕ', 'МАСЛА', 'ФИЛЬТРЫ', 'ТОРМОЗА', 'ПОДВЕСКА', 'ПРОЧЕЕ'];
 
         const App = () => {
-            const [parts, setParts] = useState([]);
+            // Инициализируем состояние сразу из localStorage, чтобы база не пропадала при обновлении
+            const [parts, setParts] = useState(() => {
+                const saved = localStorage.getItem('rossko_db');
+                return saved ? JSON.parse(saved) : [];
+            });
+            
             const [view, setView] = useState('home');
             const [searchQuery, setSearchQuery] = useState('');
             const [activeCategory, setActiveCategory] = useState('ВСЕ');
-            const [isLoading, setIsLoading] = useState(true);
-            const [status, setStatus] = useState('Синхронизация...');
+            const [isLoading, setIsLoading] = useState(false);
+            const [status, setStatus] = useState(parts.length > 0 ? 'Готов' : 'База пуста');
 
-            // ЗАГРУЗКА БАЗЫ С ПРИНУДИТЕЛЬНЫМ ОБХОДОМ КЭША
-            const loadData = async (force = false) => {
-                setIsLoading(true);
+            // Функция загрузки (теперь с сохранением в память)
+            const loadData = async (isManual = false) => {
+                if (isManual) setIsLoading(true);
                 try {
-                    const response = await fetch(`data.xlsx?t=${Date.now()}`, { cache: 'no-store' });
+                    // Используем уникальный параметр времени, чтобы GitHub не выдавал старый файл
+                    const response = await fetch(`data.xlsx?v=${new Date().getTime()}`, { 
+                        cache: 'no-store' 
+                    });
                     
-                    if (!response.ok) {
-                        throw new Error("Файл data.xlsx не найден на GitHub");
-                    }
+                    if (!response.ok) throw new Error("Файл не найден");
                     
                     const arrayBuffer = await response.arrayBuffer();
                     const data = new Uint8Array(arrayBuffer);
@@ -50,50 +58,50 @@
                     const formatted = rows.slice(1).map((row, i) => {
                         if (!row[1]) return null;
                         return {
-                            id: row[0] || i,
+                            id: row[0] || `item-${i}`,
                             name: String(row[1]),
                             brand: String(row[2] || "Rossko"),
                             article: String(row[3] || "—"),
-                            price: parseFloat(String(row[4]).replace(/[^0-9.]/g, '')) || 0,
-                            category: String(row[5] || "ПРОЧЕЕ").toUpperCase()
+                            price: parseFloat(String(row[4] || "0").replace(/[^0-9.]/g, '')) || 0,
+                            category: String(row[5] || "ПРОЧЕЕ").toUpperCase().trim()
                         };
                     }).filter(Boolean);
 
-                    setParts(formatted);
-                    localStorage.setItem('rossko_db', JSON.stringify(formatted));
-                    setStatus('Обновлено');
-                } catch (e) {
-                    const cached = localStorage.getItem('rossko_db');
-                    if (cached) {
-                        setParts(JSON.parse(cached));
-                        setStatus('Работа из кэша');
-                    } else {
-                        setStatus('Ошибка: Загрузите data.xlsx на GitHub');
+                    if (formatted.length > 0) {
+                        setParts(formatted);
+                        localStorage.setItem('rossko_db', JSON.stringify(formatted));
+                        setStatus('Обновлено');
+                        if (isManual) alert(`Успешно! Загружено ${formatted.length} поз.`);
                     }
+                } catch (e) {
+                    console.log("Ошибка загрузки, работаем на локальной базе");
+                    setStatus(parts.length > 0 ? 'Оффлайн' : 'Ошибка загрузки');
                 } finally {
                     setIsLoading(false);
                 }
             };
 
-            useEffect(() => { loadData(); }, []);
+            // При загрузке страницы пробуем обновить данные в фоне
+            useEffect(() => {
+                loadData();
+            }, []);
 
+            // Оптимизированный поиск
             const filtered = useMemo(() => {
-                const words = searchQuery.toLowerCase().trim().split(/\s+/);
+                const query = searchQuery.toLowerCase().trim();
+                const words = query.split(/\s+/);
+                
                 return parts.filter(p => {
                     const matchCat = activeCategory === 'ВСЕ' || p.category === activeCategory;
                     const content = `${p.name} ${p.article} ${p.brand}`.toLowerCase();
-                    return matchCat && words.every(word => content.includes(word));
+                    const matchQuery = words.every(word => content.includes(word));
+                    return matchCat && matchQuery;
                 }).slice(0, 50);
             }, [parts, searchQuery, activeCategory]);
 
-            if (isLoading && parts.length === 0) return (
-                <div className="h-screen flex items-center justify-center font-black text-blue-600 italic text-[10px] uppercase tracking-widest">
-                    {status}
-                </div>
-            );
-
             return (
-                <div className="max-w-md mx-auto min-h-screen bg-white relative pb-20 shadow-2xl">
+                <div className="max-w-md mx-auto min-h-screen bg-white relative pb-20 shadow-2xl animate-fade">
+                    {/* Вид: Главная */}
                     {view === 'home' && (
                         <div className="p-6 space-y-6">
                             <div className="pt-4 flex justify-between items-start">
@@ -101,19 +109,23 @@
                                     <p className="text-[10px] font-black text-blue-600 tracking-widest uppercase">Rossko Terminal</p>
                                     <h1 className="text-4xl font-black italic text-gray-800 uppercase leading-none">Складской<br/>Учет</h1>
                                 </div>
-                                <span className="text-[8px] font-bold bg-gray-100 px-2 py-1 rounded uppercase">{status}</span>
+                                <span className={`text-[8px] font-bold px-2 py-1 rounded uppercase ${status === 'Обновлено' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'}`}>
+                                    {status}
+                                </span>
                             </div>
-                            <div className="bg-blue-600 p-8 rounded-[32px] text-white relative overflow-hidden shadow-xl">
-                                <p className="text-[10px] font-black uppercase opacity-60">Товаров в системе</p>
+                            
+                            <div className="bg-blue-600 p-8 rounded-[32px] text-white relative overflow-hidden shadow-xl active:scale-[0.98] transition-transform" onClick={() => setView('search')}>
+                                <p className="text-[10px] font-black uppercase opacity-60 tracking-wider">Всего позиций в памяти</p>
                                 <p className="text-6xl font-black mt-2">{parts.length}</p>
                                 <div className="absolute -right-4 -bottom-4 text-8xl font-black italic opacity-10">R</div>
                             </div>
+
                             <div className="grid grid-cols-2 gap-4">
-                                <button onClick={() => setView('search')} className="bg-gray-50 p-6 rounded-[24px] border border-gray-100 text-left">
+                                <button onClick={() => setView('search')} className="bg-gray-50 p-6 rounded-[24px] border border-gray-100 text-left active:bg-gray-100 transition-colors">
                                     <span className="text-2xl">🔍</span>
                                     <p className="font-black uppercase text-[10px] mt-4 text-gray-400">Поиск</p>
                                 </button>
-                                <button onClick={() => setView('manage')} className="bg-gray-50 p-6 rounded-[24px] border border-gray-100 text-left">
+                                <button onClick={() => setView('manage')} className="bg-gray-50 p-6 rounded-[24px] border border-gray-100 text-left active:bg-gray-100 transition-colors">
                                     <span className="text-2xl">📦</span>
                                     <p className="font-black uppercase text-[10px] mt-4 text-gray-400">Склад</p>
                                 </button>
@@ -121,96 +133,137 @@
                         </div>
                     )}
 
+                    {/* Вид: Поиск */}
                     {view === 'search' && (
                         <div className="p-4 space-y-4">
-                            <input 
-                                className="w-full bg-gray-50 border-2 border-gray-100 p-5 rounded-[24px] font-bold outline-none focus:border-blue-500 text-lg shadow-inner"
-                                placeholder="Например: бампер vesta"
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                            />
-                            <div className="flex gap-2 overflow-x-auto no-scrollbar">
-                                {CATEGORIES.map(c => (
-                                    <button key={c} onClick={() => setActiveCategory(c)} 
-                                        className={`px-6 py-3 rounded-full text-[10px] font-black transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>
-                                        {c}
-                                    </button>
-                                ))}
+                            <div className="sticky top-0 bg-white/90 backdrop-blur-md pt-2 pb-4 z-10 space-y-4">
+                                <input 
+                                    className="w-full bg-gray-50 border-2 border-gray-100 p-5 rounded-[24px] font-bold outline-none focus:border-blue-500 text-lg shadow-inner"
+                                    placeholder="Поиск (напр. Vesta бампер)"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    autoFocus
+                                />
+                                <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                                    {CATEGORIES.map(c => (
+                                        <button key={c} onClick={() => setActiveCategory(c)} 
+                                            className={`px-6 py-3 rounded-full text-[10px] font-black transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>
+                                            {c}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                             <div className="space-y-4">
                                 {filtered.map(p => (
-                                    <div key={p.id} className="bg-white border border-gray-100 p-6 rounded-[32px] shadow-sm active:bg-gray-50 transition-colors">
+                                    <div key={p.id} className="bg-white border border-gray-100 p-6 rounded-[32px] shadow-sm active:bg-gray-50 transition-all">
                                         <div className="flex justify-between items-start mb-2">
-                                            <span className="text-[10px] font-black text-blue-600 uppercase">{p.brand}</span>
+                                            <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{p.brand}</span>
                                             <span className="text-[10px] font-mono text-gray-300">{p.article}</span>
                                         </div>
-                                        <p className="font-bold text-gray-800 leading-tight mb-4">{p.name}</p>
+                                        <p className="font-bold text-gray-800 leading-tight mb-4 text-sm">{p.name}</p>
                                         <p className="text-2xl font-black text-gray-900">{p.price.toLocaleString()} ₽</p>
                                     </div>
                                 ))}
-                                {filtered.length === 0 && <p className="text-center py-20 text-gray-300 font-black uppercase text-xs">Ничего не найдено</p>}
+                                {filtered.length === 0 && (
+                                    <div className="text-center py-20">
+                                        <p className="text-gray-300 font-black uppercase text-xs tracking-widest">Ничего не найдено</p>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
 
+                    {/* Вид: Склад (Управление) */}
                     {view === 'manage' && (
                         <div className="p-6 space-y-6">
-                            <h2 className="text-3xl font-black italic uppercase text-gray-800">Склад</h2>
-                            <div className="p-10 border-2 border-dashed border-blue-100 rounded-[40px] bg-blue-50/30 text-center">
+                            <h2 className="text-3xl font-black italic uppercase text-gray-800 tracking-tighter">Склад</h2>
+                            <div className="bg-orange-50 p-6 rounded-[32px] border border-orange-100 space-y-4">
+                                <p className="text-[10px] font-black text-orange-700 uppercase tracking-widest leading-relaxed">Инструкция для синхронизации:</p>
+                                <ul className="text-[11px] text-orange-800 space-y-2 font-medium opacity-80">
+                                    <li>• Файл должен называться <b className="underline text-orange-900">data.xlsx</b></li>
+                                    <li>• Колонки: ID, Имя, Бренд, Артикул, Цена, Категория</li>
+                                    <li>• После загрузки на GitHub нажмите "Обновить" в профиле</li>
+                                </ul>
+                            </div>
+                            <div className="p-10 border-2 border-dashed border-blue-100 rounded-[40px] bg-blue-50/20 text-center">
                                 <label className="cursor-pointer block">
                                     <span className="text-4xl block mb-4">📊</span>
-                                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Тест Excel (Локально)</span>
+                                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Локальный тест Excel</span>
                                     <input type="file" className="hidden" accept=".xlsx,.xls" onChange={(e) => {
                                         const file = e.target.files[0];
                                         if(!file) return;
                                         const reader = new FileReader();
                                         reader.onload = (evt) => {
-                                            const wb = XLSX.read(evt.target.result, {type:'array'});
-                                            const ws = wb.Sheets[wb.SheetNames[0]];
-                                            const json = XLSX.utils.sheet_to_json(ws, {header:1});
-                                            const rows = json.slice(1).map((row, i) => ({
-                                                id: row[0] || i,
-                                                name: String(row[1] || ""),
-                                                brand: String(row[2] || "Rossko"),
-                                                article: String(row[3] || "—"),
-                                                price: parseFloat(String(row[4]).replace(/[^0-9.]/g, '')) || 0,
-                                                category: String(row[5] || "ПРОЧЕЕ").toUpperCase()
-                                            })).filter(r => r.name);
-                                            setParts(rows);
-                                            localStorage.setItem('rossko_db', JSON.stringify(rows));
-                                            alert("Загружено в память этого устройства!");
+                                            try {
+                                                const wb = XLSX.read(evt.target.result, {type:'array'});
+                                                const ws = wb.Sheets[wb.SheetNames[0]];
+                                                const json = XLSX.utils.sheet_to_json(ws, {header:1});
+                                                const rows = json.slice(1).map((row, i) => ({
+                                                    id: row[0] || `loc-${i}`,
+                                                    name: String(row[1] || ""),
+                                                    brand: String(row[2] || "Rossko"),
+                                                    article: String(row[3] || "—"),
+                                                    price: parseFloat(String(row[4] || "0").replace(/[^0-9.]/g, '')) || 0,
+                                                    category: String(row[5] || "ПРОЧЕЕ").toUpperCase()
+                                                })).filter(r => r.name);
+                                                setParts(rows);
+                                                localStorage.setItem('rossko_db', JSON.stringify(rows));
+                                                alert("Загружено локально!");
+                                            } catch(err) { alert("Ошибка файла"); }
                                         };
                                         reader.readAsArrayBuffer(file);
                                     }} />
                                 </label>
                             </div>
-                            <div className="bg-orange-50 p-6 rounded-[24px] border border-orange-100 space-y-2">
-                                <p className="text-[10px] font-black text-orange-700 uppercase tracking-widest">Инструкция для синхронизации:</p>
-                                <ol className="text-[11px] text-orange-800 space-y-1 list-decimal ml-4 font-medium">
-                                    <li>Назовите файл <b>data.xlsx</b> (строго маленькие буквы)</li>
-                                    <li>Загрузите его на GitHub в корень репозитория</li>
-                                    <li>Нажмите "Обновить из облака" в профиле</li>
-                                </ol>
-                            </div>
                         </div>
                     )}
 
+                    {/* Вид: Профиль */}
                     {view === 'profile' && (
                         <div className="p-10 text-center space-y-8">
-                            <div className="w-24 h-24 bg-gray-100 rounded-[32px] mx-auto flex items-center justify-center text-4xl shadow-inner">👤</div>
-                            <h3 className="text-2xl font-black uppercase text-gray-800">Настройки</h3>
-                            <div className="space-y-3">
-                                <button onClick={() => loadData(true)} className="w-full py-5 bg-blue-600 text-white rounded-[24px] font-black uppercase text-[10px] tracking-widest shadow-lg">Обновить из облака</button>
-                                <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="w-full py-5 bg-red-50 text-red-600 rounded-[24px] font-black uppercase text-[10px] tracking-widest">Сбросить всё</button>
+                            <div className="w-24 h-24 bg-blue-50 rounded-[32px] mx-auto flex items-center justify-center text-4xl shadow-inner">👤</div>
+                            <div>
+                                <h3 className="text-2xl font-black uppercase text-gray-800">Настройки</h3>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase mt-2 tracking-widest">Rossko Terminal v2.1</p>
+                            </div>
+                            
+                            <div className="space-y-3 pt-4">
+                                <button 
+                                    onClick={() => loadData(true)} 
+                                    disabled={isLoading}
+                                    className={`w-full py-5 rounded-[24px] font-black uppercase text-[10px] tracking-widest shadow-lg transition-all active:scale-95 ${isLoading ? 'bg-gray-100 text-gray-400' : 'bg-blue-600 text-white'}`}
+                                >
+                                    {isLoading ? 'Загрузка...' : 'Синхронизировать с облаком'}
+                                </button>
+                                
+                                <button 
+                                    onClick={() => {
+                                        if(confirm("Удалить все данные из памяти телефона?")) {
+                                            localStorage.removeItem('rossko_db');
+                                            setParts([]);
+                                            window.location.reload();
+                                        }
+                                    }} 
+                                    className="w-full py-5 bg-red-50 text-red-500 rounded-[24px] font-black uppercase text-[10px] tracking-widest active:bg-red-100 transition-colors"
+                                >
+                                    Очистить память (Кэш)
+                                </button>
                             </div>
                         </div>
                     )}
 
-                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-gray-100 flex justify-around py-5 px-4 z-50 rounded-t-[32px]">
-                        <button onClick={() => setView('home')} className={`text-2xl opacity-20 ${view === 'home' && 'active-tab scale-125'}`}>🏠</button>
-                        <button onClick={() => setView('search')} className={`text-2xl opacity-20 ${view === 'search' && 'active-tab scale-125'}`}>🔍</button>
-                        <button onClick={() => setView('manage')} className={`text-2xl opacity-20 ${view === 'manage' && 'active-tab scale-125'}`}>📦</button>
-                        <button onClick={() => setView('profile')} className={`text-2xl opacity-20 ${view === 'profile' && 'active-tab scale-125'}`}>👤</button>
+                    {/* Навигация */}
+                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-xl border-t border-gray-100 flex justify-around py-5 px-4 z-50 rounded-t-[32px] shadow-sm">
+                        {[
+                            { id: 'home', icon: '🏠' },
+                            { id: 'search', icon: '🔍' },
+                            { id: 'manage', icon: '📦' },
+                            { id: 'profile', icon: '👤' }
+                        ].map(tab => (
+                            <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl opacity-20 transition-all duration-300 ${view === tab.id ? 'active-tab scale-125' : 'hover:opacity-50'}`}>
+                                {tab.icon}
+                            </button>
+                        ))}
                     </nav>
                 </div>
             );
