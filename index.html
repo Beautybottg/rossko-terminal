@@ -14,32 +14,37 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
         body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #f9fafb; margin: 0; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
-        .active-tab { color: #2563eb !important; opacity: 1 !important; }
+        .active-tab { color: #2563eb !important; opacity: 1 !important; transform: scale(1.1); }
     </style>
 </head>
 <body>
     <div id="root"></div>
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useCallback } = React;
         const CATEGORIES = ['ВСЕ', 'МАСЛА', 'ФИЛЬТРЫ', 'ТОРМОЗА', 'ПОДВЕСКА', 'ПРОЧЕЕ'];
+        const ITEMS_PER_PAGE = 15;
 
         const App = () => {
             const [parts, setParts] = useState(() => {
-                const saved = localStorage.getItem('rossko_db');
-                return saved ? JSON.parse(saved) : [];
+                try {
+                    const saved = localStorage.getItem('rossko_db');
+                    return saved ? JSON.parse(saved) : [];
+                } catch(e) { return []; }
             });
             
             const [view, setView] = useState('home');
             const [searchQuery, setSearchQuery] = useState('');
             const [activeCategory, setActiveCategory] = useState('ВСЕ');
+            const [currentPage, setCurrentPage] = useState(1);
             const [isLoading, setIsLoading] = useState(false);
-            const [status, setStatus] = useState('Проверка...');
+            const [status, setStatus] = useState('Инициализация...');
 
-            const processRows = (rows) => {
+            const processRows = useCallback((rows) => {
+                if (!rows || rows.length < 2) return [];
                 return rows.slice(1).map((row, i) => {
                     if (!row[1]) return null;
                     return {
-                        id: row[0] || `item-${i}-${Date.now()}`,
+                        id: `item-${i}-${Date.now()}`,
                         name: String(row[1]).trim(),
                         brand: String(row[2] || "Rossko"),
                         article: String(row[3] || "—"),
@@ -47,18 +52,21 @@
                         category: String(row[5] || "ПРОЧЕЕ").toUpperCase().trim()
                     };
                 }).filter(Boolean);
-            };
+            }, []);
 
             const loadData = async (isManual = false) => {
                 if (isManual) setIsLoading(true);
+                setStatus('Синхронизация...');
                 try {
-                    // Принудительно игнорируем кэш
-                    const response = await fetch(`data.xlsx?t=${Date.now()}`, { cache: "no-store" });
+                    const response = await fetch(`data.xlsx?v=${Date.now()}`, { 
+                        cache: "no-store",
+                        headers: { 'Pragma': 'no-cache' }
+                    });
+                    
                     if (!response.ok) throw new Error();
                     
                     const arrayBuffer = await response.arrayBuffer();
-                    const data = new Uint8Array(arrayBuffer);
-                    const workbook = XLSX.read(data, { type: 'array' });
+                    const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
                     const ws = workbook.Sheets[workbook.SheetNames[0]];
                     const json = XLSX.utils.sheet_to_json(ws, { header: 1 });
                     
@@ -67,11 +75,10 @@
                         setParts(formatted);
                         localStorage.setItem('rossko_db', JSON.stringify(formatted));
                         setStatus('Обновлено (Облако)');
-                        if (isManual) alert("База синхронизирована!");
+                        if (isManual) alert("База успешно обновлена!");
                     }
                 } catch (e) {
-                    if (parts.length > 0) setStatus('Доступно (Локально)');
-                    else setStatus('Ошибка загрузки');
+                    setStatus(parts.length > 0 ? 'В сети (Кэш)' : 'Ошибка сети');
                 } finally {
                     setIsLoading(false);
                 }
@@ -79,63 +86,75 @@
 
             useEffect(() => { loadData(); }, []);
 
-            // ИСПРАВЛЕННЫЙ СТРОГИЙ ПОИСК
-            const filtered = useMemo(() => {
-                const query = searchQuery.toLowerCase().trim();
-                if (!query) return parts.filter(p => activeCategory === 'ВСЕ' || p.category === activeCategory).slice(0, 50);
+            // Сброс страницы при поиске
+            useEffect(() => {
+                setCurrentPage(1);
+            }, [searchQuery, activeCategory]);
 
-                const searchWords = query.split(/\s+/);
+            // Логика фильтрации и пагинации
+            const { filteredItems, totalPages } = useMemo(() => {
+                const query = searchQuery.toLowerCase().trim();
+                const searchWords = query.split(/\s+/).filter(w => w.length > 0);
                 
-                return parts.filter(p => {
+                let result = parts.filter(p => {
                     const matchCat = activeCategory === 'ВСЕ' || p.category === activeCategory;
                     if (!matchCat) return false;
+                    if (searchWords.length === 0) return true;
 
                     const name = p.name.toLowerCase();
-                    const nameWords = name.split(/[\s,./\-\(\)]+/); // разбиваем название товара на отдельные слова
-
-                    // Проверяем, что каждое слово из поиска есть в названии/артикуле как отдельное начало слова
-                    return searchWords.every(sWord => {
-                        return nameWords.some(nWord => nWord.startsWith(sWord)) || 
-                               p.article.toLowerCase().includes(sWord);
+                    const article = p.article.toLowerCase();
+                    
+                    return searchWords.every(word => {
+                        const nameWords = name.split(/[\s,./\-\(\)]+/);
+                        return nameWords.some(nw => nw.startsWith(word)) || article.includes(word);
                     });
-                })
-                .sort((a, b) => {
-                    const firstWord = searchWords[0];
-                    const aStarts = a.name.toLowerCase().startsWith(firstWord);
-                    const bStarts = b.name.toLowerCase().startsWith(firstWord);
-                    if (aStarts && !bStarts) return -1;
-                    if (!aStarts && bStarts) return 1;
-                    return a.name.localeCompare(b.name);
-                })
-                .slice(0, 50);
-            }, [parts, searchQuery, activeCategory]);
+                });
+
+                if (searchWords.length > 0) {
+                    const first = searchWords[0];
+                    result.sort((a, b) => {
+                        const aStarts = a.name.toLowerCase().startsWith(first);
+                        const bStarts = b.name.toLowerCase().startsWith(first);
+                        if (aStarts && !bStarts) return -1;
+                        if (!aStarts && bStarts) return 1;
+                        return a.name.localeCompare(b.name);
+                    });
+                }
+
+                const pages = Math.ceil(result.length / ITEMS_PER_PAGE);
+                const sliced = result.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+                return { filteredItems: sliced, totalPages: pages };
+            }, [parts, searchQuery, activeCategory, currentPage]);
 
             return (
-                <div className="max-w-md mx-auto min-h-screen bg-white relative pb-20 shadow-2xl">
-                    <div className="p-6 pb-2 flex justify-between items-start">
+                <div className="max-w-md mx-auto min-h-screen bg-white relative pb-32 shadow-2xl">
+                    {/* Header */}
+                    <div className="p-6 pb-4 flex justify-between items-center bg-white sticky top-0 z-50 border-b border-gray-50">
                         <div>
                             <p className="text-[10px] font-black text-blue-600 tracking-widest uppercase">Rossko Terminal</p>
-                            <h1 className="text-4xl font-black italic text-gray-800 uppercase leading-none">Склад</h1>
+                            <h1 className="text-3xl font-black italic text-gray-800 uppercase leading-none">Склад</h1>
                         </div>
-                        <span className={`text-[8px] font-bold px-2 py-1 rounded uppercase ${status.includes('Обновлено') ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                        <span className={`text-[9px] font-bold px-3 py-1.5 rounded-full uppercase transition-colors ${status.includes('Обновлено') ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
                             {status}
                         </span>
                     </div>
 
                     {view === 'home' && (
                         <div className="p-6 space-y-6">
-                            <div className="bg-blue-600 p-8 rounded-[32px] text-white relative shadow-xl active:scale-95 transition-all" onClick={() => setView('search')}>
-                                <p className="text-[10px] font-black uppercase opacity-60">Товаров в памяти</p>
-                                <p className="text-6xl font-black mt-2">{parts.length}</p>
+                            <div className="bg-blue-600 p-8 rounded-[35px] text-white relative shadow-xl active:scale-95 transition-all" onClick={() => setView('search')}>
+                                <p className="text-[10px] font-black uppercase opacity-60 tracking-widest">Всего в базе</p>
+                                <p className="text-6xl font-black mt-2 tracking-tight">{parts.length}</p>
+                                <div className="absolute -right-4 -bottom-4 text-9xl font-black italic opacity-10">R</div>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
-                                <button onClick={() => setView('search')} className="bg-gray-50 p-6 rounded-[24px] border border-gray-100 text-left active:bg-gray-100 transition-colors">
-                                    <span className="text-2xl">🔍</span>
+                                <button onClick={() => setView('search')} className="bg-gray-50 p-6 rounded-[28px] border border-gray-100 text-left active:bg-blue-50 transition-all">
+                                    <span className="text-3xl">🔍</span>
                                     <p className="font-black uppercase text-[10px] mt-4 text-gray-400">Поиск</p>
                                 </button>
-                                <button onClick={() => setView('manage')} className="bg-gray-50 p-6 rounded-[24px] border border-gray-100 text-left active:bg-gray-100 transition-colors">
-                                    <span className="text-2xl">📦</span>
-                                    <p className="font-black uppercase text-[10px] mt-4 text-gray-400">Загрузка</p>
+                                <button onClick={() => setView('manage')} className="bg-gray-50 p-6 rounded-[28px] border border-gray-100 text-left active:bg-blue-50 transition-all">
+                                    <span className="text-3xl">📦</span>
+                                    <p className="font-black uppercase text-[10px] mt-4 text-gray-400">Файл</p>
                                 </button>
                             </div>
                         </div>
@@ -143,26 +162,27 @@
 
                     {view === 'search' && (
                         <div className="p-4 space-y-4">
-                            <div className="sticky top-0 bg-white/95 backdrop-blur-sm pt-2 pb-4 z-10 space-y-4">
+                            <div className="space-y-4">
                                 <input 
-                                    className="w-full bg-gray-50 border-2 border-gray-100 p-5 rounded-[24px] font-bold outline-none focus:border-blue-500 text-lg shadow-inner"
-                                    placeholder="Крыло vesta..."
+                                    className="w-full bg-gray-100 border-none p-5 rounded-[22px] font-bold outline-none focus:ring-2 ring-blue-500 text-lg shadow-inner"
+                                    placeholder="Поиск товара..."
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
                                     autoFocus
                                 />
-                                <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
                                     {CATEGORIES.map(c => (
                                         <button key={c} onClick={() => setActiveCategory(c)} 
-                                            className={`px-6 py-3 rounded-full text-[10px] font-black whitespace-nowrap transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>
+                                            className={`px-6 py-3 rounded-full text-[10px] font-black whitespace-nowrap transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-400'}`}>
                                             {c}
                                         </button>
                                     ))}
                                 </div>
                             </div>
-                            <div className="space-y-4">
-                                {filtered.map(p => (
-                                    <div key={p.id} className="bg-white border border-gray-100 p-6 rounded-[32px] shadow-sm active:bg-gray-50 transition-all">
+
+                            <div className="space-y-3">
+                                {filteredItems.map(p => (
+                                    <div key={p.id} className="bg-white border border-gray-100 p-6 rounded-[30px] shadow-sm active:bg-gray-50 transition-all">
                                         <div className="flex justify-between items-start mb-2">
                                             <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{p.brand}</span>
                                             <span className="text-[10px] font-mono text-gray-300 uppercase">{p.article}</span>
@@ -171,29 +191,47 @@
                                         <p className="text-2xl font-black text-gray-900">{p.price.toLocaleString()} ₽</p>
                                     </div>
                                 ))}
+                                
+                                {totalPages > 1 && (
+                                    <div className="flex justify-between items-center py-6 px-2">
+                                        <button 
+                                            disabled={currentPage === 1}
+                                            onClick={() => { setCurrentPage(p => p - 1); window.scrollTo(0,0); }}
+                                            className="px-6 py-3 bg-gray-100 rounded-2xl font-black text-[10px] uppercase disabled:opacity-30"
+                                        >
+                                            Назад
+                                        </button>
+                                        <span className="text-[10px] font-black text-gray-400 uppercase">Стр {currentPage} / {totalPages}</span>
+                                        <button 
+                                            disabled={currentPage === totalPages}
+                                            onClick={() => { setCurrentPage(p => p + 1); window.scrollTo(0,0); }}
+                                            className="px-6 py-3 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase disabled:opacity-30 shadow-lg"
+                                        >
+                                            Далее
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
 
                     {view === 'manage' && (
                         <div className="p-6 space-y-6">
-                            <div className="p-10 border-2 border-dashed border-blue-100 rounded-[40px] bg-blue-50/20 text-center relative">
+                            <div className="p-12 border-4 border-dotted border-blue-50 rounded-[45px] bg-blue-50/20 text-center">
                                 <label className="cursor-pointer block">
-                                    <span className="text-4xl block mb-4">📊</span>
-                                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Выбрать Excel</span>
+                                    <span className="text-5xl block mb-6">📂</span>
+                                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Загрузить Excel</span>
                                     <input type="file" className="hidden" accept=".xlsx,.xls" onChange={(e) => {
                                         const file = e.target.files[0];
                                         if(!file) return;
                                         const reader = new FileReader();
                                         reader.onload = (evt) => {
-                                            try {
-                                                const wb = XLSX.read(evt.target.result, {type:'array'});
-                                                const ws = wb.Sheets[wb.SheetNames[0]];
-                                                const rows = processRows(XLSX.utils.sheet_to_json(ws, {header:1}));
-                                                setParts(rows);
-                                                localStorage.setItem('rossko_db', JSON.stringify(rows));
-                                                alert(`Успешно! Загружено ${rows.length} поз.`);
-                                            } catch(err) { alert("Ошибка файла"); }
+                                            const wb = XLSX.read(evt.target.result, {type:'array'});
+                                            const ws = wb.Sheets[wb.SheetNames[0]];
+                                            const rows = processRows(XLSX.utils.sheet_to_json(ws, {header:1}));
+                                            setParts(rows);
+                                            localStorage.setItem('rossko_db', JSON.stringify(rows));
+                                            alert("База обновлена!");
                                         };
                                         reader.readAsArrayBuffer(file);
                                     }} />
@@ -204,19 +242,21 @@
 
                     {view === 'profile' && (
                         <div className="p-10 text-center space-y-8">
-                            <div className="w-24 h-24 bg-blue-50 rounded-[32px] mx-auto flex items-center justify-center text-4xl shadow-inner">👤</div>
-                            <div className="space-y-3 pt-4">
-                                <button onClick={() => loadData(true)} disabled={isLoading} className={`w-full py-5 rounded-[24px] font-black uppercase text-[10px] tracking-widest shadow-lg active:scale-95 transition-all ${isLoading ? 'bg-gray-200 text-gray-400' : 'bg-blue-600 text-white'}`}>
-                                    {isLoading ? 'Загрузка...' : 'Обновить из облака'}
+                            <div className="w-24 h-24 bg-blue-50 rounded-[35px] mx-auto flex items-center justify-center text-4xl">👤</div>
+                            <div className="space-y-3">
+                                <button onClick={() => loadData(true)} disabled={isLoading} className={`w-full py-5 rounded-[22px] font-black uppercase text-[10px] tracking-widest shadow-xl transition-all ${isLoading ? 'bg-gray-200 text-gray-400' : 'bg-blue-600 text-white active:scale-95'}`}>
+                                    {isLoading ? 'Загрузка...' : 'Синхронизировать Облако'}
                                 </button>
-                                <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="w-full py-5 bg-red-50 text-red-500 rounded-[24px] font-black uppercase text-[10px] tracking-widest">Сбросить кэш</button>
+                                <button onClick={() => { if(confirm('Очистить память?')){ localStorage.clear(); window.location.reload(); } }} className="w-full py-5 bg-red-50 text-red-500 rounded-[22px] font-black uppercase text-[10px] tracking-widest">
+                                    Сбросить кэш
+                                </button>
                             </div>
                         </div>
                     )}
 
-                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-xl border-t border-gray-100 flex justify-around py-5 px-4 z-50 rounded-t-[32px] shadow-sm">
+                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-2xl border-t border-gray-100 flex justify-around py-6 px-6 z-50 rounded-t-[40px] shadow-2xl">
                         {[{ id: 'home', icon: '🏠' }, { id: 'search', icon: '🔍' }, { id: 'manage', icon: '📦' }, { id: 'profile', icon: '👤' }].map(tab => (
-                            <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl opacity-20 transition-all duration-300 ${view === tab.id ? 'active-tab scale-125' : ''}`}>
+                            <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl opacity-20 transition-all duration-300 ${view === tab.id ? 'active-tab opacity-100' : ''}`}>
                                 {tab.icon}
                             </button>
                         ))}
