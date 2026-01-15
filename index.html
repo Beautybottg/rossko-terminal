@@ -12,9 +12,16 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #f9fafb; margin: 0; }
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #f9fafb; margin: 0; overflow-x: hidden; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .active-tab { color: #2563eb !important; opacity: 1 !important; transform: scale(1.1); }
+        
+        /* Анимация загрузочного экрана */
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; visibility: hidden; }
+        }
+        .splash-fade-out { animation: fadeOut 0.5s forwards; }
     </style>
 </head>
 <body>
@@ -38,6 +45,10 @@
             const [currentPage, setCurrentPage] = useState(1);
             const [isLoading, setIsLoading] = useState(false);
             const [status, setStatus] = useState('Инициализация...');
+            
+            // Состояния для загрузочного экрана
+            const [isAppReady, setIsAppReady] = useState(false);
+            const [loadProgress, setLoadProgress] = useState(0);
 
             const processRows = useCallback((rows) => {
                 if (!rows || rows.length < 2) return [];
@@ -56,16 +67,20 @@
 
             const loadData = async (isManual = false) => {
                 if (isManual) setIsLoading(true);
-                setStatus('Синхронизация...');
+                if (!isManual) setLoadProgress(20);
+                
                 try {
                     const response = await fetch(`data.xlsx?v=${Date.now()}`, { 
-                        cache: "no-store",
-                        headers: { 'Pragma': 'no-cache' }
+                        cache: "no-store"
                     });
                     
+                    if (!isManual) setLoadProgress(50);
+
                     if (!response.ok) throw new Error();
                     
                     const arrayBuffer = await response.arrayBuffer();
+                    if (!isManual) setLoadProgress(80);
+
                     const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
                     const ws = workbook.Sheets[workbook.SheetNames[0]];
                     const json = XLSX.utils.sheet_to_json(ws, { header: 1 });
@@ -81,17 +96,22 @@
                     setStatus(parts.length > 0 ? 'В сети (Кэш)' : 'Ошибка сети');
                 } finally {
                     setIsLoading(false);
+                    if (!isManual) {
+                        setLoadProgress(100);
+                        setTimeout(() => setIsAppReady(true), 600);
+                    }
                 }
             };
 
-            useEffect(() => { loadData(); }, []);
+            // Запуск при старте
+            useEffect(() => {
+                loadData();
+            }, []);
 
-            // Сброс страницы при поиске
             useEffect(() => {
                 setCurrentPage(1);
             }, [searchQuery, activeCategory]);
 
-            // Логика фильтрации и пагинации
             const { filteredItems, totalPages } = useMemo(() => {
                 const query = searchQuery.toLowerCase().trim();
                 const searchWords = query.split(/\s+/).filter(w => w.length > 0);
@@ -128,139 +148,161 @@
             }, [parts, searchQuery, activeCategory, currentPage]);
 
             return (
-                <div className="max-w-md mx-auto min-h-screen bg-white relative pb-32 shadow-2xl">
-                    {/* Header */}
-                    <div className="p-6 pb-4 flex justify-between items-center bg-white sticky top-0 z-50 border-b border-gray-50">
-                        <div>
-                            <p className="text-[10px] font-black text-blue-600 tracking-widest uppercase">Rossko Terminal</p>
-                            <h1 className="text-3xl font-black italic text-gray-800 uppercase leading-none">Склад</h1>
-                        </div>
-                        <span className={`text-[9px] font-bold px-3 py-1.5 rounded-full uppercase transition-colors ${status.includes('Обновлено') ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
-                            {status}
-                        </span>
-                    </div>
-
-                    {view === 'home' && (
-                        <div className="p-6 space-y-6">
-                            <div className="bg-blue-600 p-8 rounded-[35px] text-white relative shadow-xl active:scale-95 transition-all" onClick={() => setView('search')}>
-                                <p className="text-[10px] font-black uppercase opacity-60 tracking-widest">Всего в базе</p>
-                                <p className="text-6xl font-black mt-2 tracking-tight">{parts.length}</p>
-                                <div className="absolute -right-4 -bottom-4 text-9xl font-black italic opacity-10">R</div>
+                <div className="max-w-md mx-auto min-h-screen bg-white relative shadow-2xl">
+                    
+                    {/* ЗАГРУЗОЧНЫЙ ЭКРАН (SPLASH SCREEN) */}
+                    {!isAppReady && (
+                        <div className={`fixed inset-0 z-[100] bg-blue-600 flex flex-col items-center justify-center p-10 transition-opacity duration-500`}>
+                            <div className="text-white text-8xl font-black italic mb-8 animate-bounce">R</div>
+                            <div className="w-full bg-blue-800 h-2 rounded-full overflow-hidden max-w-[200px]">
+                                <div 
+                                    className="bg-white h-full transition-all duration-300" 
+                                    style={{ width: `${loadProgress}%` }}
+                                ></div>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <button onClick={() => setView('search')} className="bg-gray-50 p-6 rounded-[28px] border border-gray-100 text-left active:bg-blue-50 transition-all">
-                                    <span className="text-3xl">🔍</span>
-                                    <p className="font-black uppercase text-[10px] mt-4 text-gray-400">Поиск</p>
-                                </button>
-                                <button onClick={() => setView('manage')} className="bg-gray-50 p-6 rounded-[28px] border border-gray-100 text-left active:bg-blue-50 transition-all">
-                                    <span className="text-3xl">📦</span>
-                                    <p className="font-black uppercase text-[10px] mt-4 text-gray-400">Файл</p>
-                                </button>
-                            </div>
+                            <p className="text-white/60 text-[10px] font-black uppercase tracking-widest mt-4">
+                                Загрузка {loadProgress}%
+                            </p>
                         </div>
                     )}
 
-                    {view === 'search' && (
-                        <div className="p-4 space-y-4">
-                            <div className="space-y-4">
-                                <input 
-                                    className="w-full bg-gray-100 border-none p-5 rounded-[22px] font-bold outline-none focus:ring-2 ring-blue-500 text-lg shadow-inner"
-                                    placeholder="Поиск товара..."
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    autoFocus
-                                />
-                                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
-                                    {CATEGORIES.map(c => (
-                                        <button key={c} onClick={() => setActiveCategory(c)} 
-                                            className={`px-6 py-3 rounded-full text-[10px] font-black whitespace-nowrap transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-400'}`}>
-                                            {c}
+                    {/* ОСНОВНОЙ КОНТЕНТ */}
+                    <div className={isAppReady ? 'block animate-fade-in' : 'hidden'}>
+                        {/* Header */}
+                        <div className="p-6 pb-4 flex justify-between items-center bg-white sticky top-0 z-50 border-b border-gray-50">
+                            <div>
+                                <p className="text-[10px] font-black text-blue-600 tracking-widest uppercase">Rossko Terminal</p>
+                                <h1 className="text-3xl font-black italic text-gray-800 uppercase leading-none">Склад</h1>
+                            </div>
+                            <span className={`text-[9px] font-bold px-3 py-1.5 rounded-full uppercase transition-colors ${status.includes('Обновлено') ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                                {status}
+                            </span>
+                        </div>
+
+                        <div className="pb-32">
+                            {view === 'home' && (
+                                <div className="p-6 space-y-6">
+                                    <div className="bg-blue-600 p-8 rounded-[35px] text-white relative shadow-xl active:scale-95 transition-all" onClick={() => setView('search')}>
+                                        <p className="text-[10px] font-black uppercase opacity-60 tracking-widest">Всего в базе</p>
+                                        <p className="text-6xl font-black mt-2 tracking-tight">{parts.length}</p>
+                                        <div className="absolute -right-4 -bottom-4 text-9xl font-black italic opacity-10">R</div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <button onClick={() => setView('search')} className="bg-gray-50 p-6 rounded-[28px] border border-gray-100 text-left active:bg-blue-50 transition-all">
+                                            <span className="text-3xl">🔍</span>
+                                            <p className="font-black uppercase text-[10px] mt-4 text-gray-400">Поиск</p>
                                         </button>
-                                    ))}
+                                        <button onClick={() => setView('manage')} className="bg-gray-50 p-6 rounded-[28px] border border-gray-100 text-left active:bg-blue-50 transition-all">
+                                            <span className="text-3xl">📦</span>
+                                            <p className="font-black uppercase text-[10px] mt-4 text-gray-400">Файл</p>
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
 
-                            <div className="space-y-3">
-                                {filteredItems.map(p => (
-                                    <div key={p.id} className="bg-white border border-gray-100 p-6 rounded-[30px] shadow-sm active:bg-gray-50 transition-all">
-                                        <div className="flex justify-between items-start mb-2">
-                                            <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{p.brand}</span>
-                                            <span className="text-[10px] font-mono text-gray-300 uppercase">{p.article}</span>
+                            {view === 'search' && (
+                                <div className="p-4 space-y-4">
+                                    <div className="space-y-4">
+                                        <input 
+                                            className="w-full bg-gray-100 border-none p-5 rounded-[22px] font-bold outline-none focus:ring-2 ring-blue-500 text-lg shadow-inner"
+                                            placeholder="Поиск товара..."
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                        />
+                                        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
+                                            {CATEGORIES.map(c => (
+                                                <button key={c} onClick={() => setActiveCategory(c)} 
+                                                    className={`px-6 py-3 rounded-full text-[10px] font-black whitespace-nowrap transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-400'}`}>
+                                                    {c}
+                                                </button>
+                                            ))}
                                         </div>
-                                        <p className="font-bold text-gray-800 leading-tight mb-4 text-sm">{p.name}</p>
-                                        <p className="text-2xl font-black text-gray-900">{p.price.toLocaleString()} ₽</p>
                                     </div>
-                                ))}
-                                
-                                {totalPages > 1 && (
-                                    <div className="flex justify-between items-center py-6 px-2">
-                                        <button 
-                                            disabled={currentPage === 1}
-                                            onClick={() => { setCurrentPage(p => p - 1); window.scrollTo(0,0); }}
-                                            className="px-6 py-3 bg-gray-100 rounded-2xl font-black text-[10px] uppercase disabled:opacity-30"
-                                        >
-                                            Назад
+
+                                    <div className="space-y-3">
+                                        {filteredItems.map(p => (
+                                            <div key={p.id} className="bg-white border border-gray-100 p-6 rounded-[30px] shadow-sm active:bg-gray-50 transition-all">
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{p.brand}</span>
+                                                    <span className="text-[10px] font-mono text-gray-300 uppercase">{p.article}</span>
+                                                </div>
+                                                <p className="font-bold text-gray-800 leading-tight mb-4 text-sm">{p.name}</p>
+                                                <p className="text-2xl font-black text-gray-900">{p.price.toLocaleString()} ₽</p>
+                                            </div>
+                                        ))}
+                                        
+                                        {totalPages > 1 && (
+                                            <div className="flex justify-between items-center py-6 px-2">
+                                                <button 
+                                                    disabled={currentPage === 1}
+                                                    onClick={() => { setCurrentPage(p => p - 1); window.scrollTo(0,0); }}
+                                                    className="px-6 py-3 bg-gray-100 rounded-2xl font-black text-[10px] uppercase disabled:opacity-30"
+                                                >
+                                                    Назад
+                                                </button>
+                                                <span className="text-[10px] font-black text-gray-400 uppercase">Стр {currentPage} / {totalPages}</span>
+                                                <button 
+                                                    disabled={currentPage === totalPages}
+                                                    onClick={() => { setCurrentPage(p => p + 1); window.scrollTo(0,0); }}
+                                                    className="px-6 py-3 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase disabled:opacity-30 shadow-lg"
+                                                >
+                                                    Далее
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {view === 'manage' && (
+                                <div className="p-6 space-y-6">
+                                    <div className="p-12 border-4 border-dotted border-blue-50 rounded-[45px] bg-blue-50/20 text-center">
+                                        <label className="cursor-pointer block">
+                                            <span className="text-5xl block mb-6">📂</span>
+                                            <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Загрузить Excel</span>
+                                            <input type="file" className="hidden" accept=".xlsx,.xls" onChange={(e) => {
+                                                const file = e.target.files[0];
+                                                if(!file) return;
+                                                const reader = new FileReader();
+                                                reader.onload = (evt) => {
+                                                    const wb = XLSX.read(evt.target.result, {type:'array'});
+                                                    const ws = wb.Sheets[wb.SheetNames[0]];
+                                                    const rows = processRows(XLSX.utils.sheet_to_json(ws, {header:1}));
+                                                    setParts(rows);
+                                                    localStorage.setItem('rossko_db', JSON.stringify(rows));
+                                                    alert("База обновлена!");
+                                                };
+                                                reader.readAsArrayBuffer(file);
+                                            }} />
+                                        </label>
+                                    </div>
+                                </div>
+                            )}
+
+                            {view === 'profile' && (
+                                <div className="p-10 text-center space-y-8">
+                                    <div className="w-24 h-24 bg-blue-50 rounded-[35px] mx-auto flex items-center justify-center text-4xl">👤</div>
+                                    <div className="space-y-3">
+                                        <button onClick={() => loadData(true)} disabled={isLoading} className={`w-full py-5 rounded-[22px] font-black uppercase text-[10px] tracking-widest shadow-xl transition-all ${isLoading ? 'bg-gray-200 text-gray-400' : 'bg-blue-600 text-white active:scale-95'}`}>
+                                            {isLoading ? 'Загрузка...' : 'Синхронизировать Облако'}
                                         </button>
-                                        <span className="text-[10px] font-black text-gray-400 uppercase">Стр {currentPage} / {totalPages}</span>
-                                        <button 
-                                            disabled={currentPage === totalPages}
-                                            onClick={() => { setCurrentPage(p => p + 1); window.scrollTo(0,0); }}
-                                            className="px-6 py-3 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase disabled:opacity-30 shadow-lg"
-                                        >
-                                            Далее
+                                        <button onClick={() => { if(confirm('Очистить память?')){ localStorage.clear(); window.location.reload(); } }} className="w-full py-5 bg-red-50 text-red-500 rounded-[22px] font-black uppercase text-[10px] tracking-widest">
+                                            Сбросить кэш
                                         </button>
                                     </div>
-                                )}
-                            </div>
+                                </div>
+                            )}
                         </div>
-                    )}
 
-                    {view === 'manage' && (
-                        <div className="p-6 space-y-6">
-                            <div className="p-12 border-4 border-dotted border-blue-50 rounded-[45px] bg-blue-50/20 text-center">
-                                <label className="cursor-pointer block">
-                                    <span className="text-5xl block mb-6">📂</span>
-                                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Загрузить Excel</span>
-                                    <input type="file" className="hidden" accept=".xlsx,.xls" onChange={(e) => {
-                                        const file = e.target.files[0];
-                                        if(!file) return;
-                                        const reader = new FileReader();
-                                        reader.onload = (evt) => {
-                                            const wb = XLSX.read(evt.target.result, {type:'array'});
-                                            const ws = wb.Sheets[wb.SheetNames[0]];
-                                            const rows = processRows(XLSX.utils.sheet_to_json(ws, {header:1}));
-                                            setParts(rows);
-                                            localStorage.setItem('rossko_db', JSON.stringify(rows));
-                                            alert("База обновлена!");
-                                        };
-                                        reader.readAsArrayBuffer(file);
-                                    }} />
-                                </label>
-                            </div>
-                        </div>
-                    )}
-
-                    {view === 'profile' && (
-                        <div className="p-10 text-center space-y-8">
-                            <div className="w-24 h-24 bg-blue-50 rounded-[35px] mx-auto flex items-center justify-center text-4xl">👤</div>
-                            <div className="space-y-3">
-                                <button onClick={() => loadData(true)} disabled={isLoading} className={`w-full py-5 rounded-[22px] font-black uppercase text-[10px] tracking-widest shadow-xl transition-all ${isLoading ? 'bg-gray-200 text-gray-400' : 'bg-blue-600 text-white active:scale-95'}`}>
-                                    {isLoading ? 'Загрузка...' : 'Синхронизировать Облако'}
+                        {/* Navbar */}
+                        <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-2xl border-t border-gray-100 flex justify-around py-6 px-6 z-50 rounded-t-[40px] shadow-2xl">
+                            {[{ id: 'home', icon: '🏠' }, { id: 'search', icon: '🔍' }, { id: 'manage', icon: '📦' }, { id: 'profile', icon: '👤' }].map(tab => (
+                                <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl opacity-20 transition-all duration-300 ${view === tab.id ? 'active-tab opacity-100' : ''}`}>
+                                    {tab.icon}
                                 </button>
-                                <button onClick={() => { if(confirm('Очистить память?')){ localStorage.clear(); window.location.reload(); } }} className="w-full py-5 bg-red-50 text-red-500 rounded-[22px] font-black uppercase text-[10px] tracking-widest">
-                                    Сбросить кэш
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-2xl border-t border-gray-100 flex justify-around py-6 px-6 z-50 rounded-t-[40px] shadow-2xl">
-                        {[{ id: 'home', icon: '🏠' }, { id: 'search', icon: '🔍' }, { id: 'manage', icon: '📦' }, { id: 'profile', icon: '👤' }].map(tab => (
-                            <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl opacity-20 transition-all duration-300 ${view === tab.id ? 'active-tab opacity-100' : ''}`}>
-                                {tab.icon}
-                            </button>
-                        ))}
-                    </nav>
+                            ))}
+                        </nav>
+                    </div>
                 </div>
             );
         };
