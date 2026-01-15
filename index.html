@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Rossko Terminal</title>
+    <link rel="icon" type="image/png" href="logo192.png">
+    <link rel="apple-touch-icon" href="logo192.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -14,11 +16,7 @@
         body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #f9fafb; margin: 0; overflow-x: hidden; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .active-tab { color: #2563eb !important; opacity: 1 !important; transform: scale(1.1); }
-        
-        @keyframes slideUp {
-            from { transform: translateY(100%); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-        }
+        @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .toast-animate { animation: slideUp 0.3s ease-out forwards; }
     </style>
 </head>
@@ -29,22 +27,39 @@
         const CATEGORIES = ['ВСЕ', 'МАСЛА', 'ФИЛЬТРЫ', 'ТОРМОЗА', 'ПОДВЕСКА', 'ПРОЧЕЕ'];
         const ITEMS_PER_PAGE = 15;
 
-        const App = () => {
-            const [parts, setParts] = useState(() => {
-                try {
-                    const saved = localStorage.getItem('rossko_db');
-                    return saved ? JSON.parse(saved) : [];
-                } catch(e) { return []; }
+        // --- Работа с IndexedDB (вместо localStorage) ---
+        const dbName = "RosskoDB";
+        const storeName = "parts";
+
+        const initDB = () => new Promise((resolve) => {
+            const request = indexedDB.open(dbName, 1);
+            request.onupgradeneeded = (e) => e.target.result.createObjectStore(storeName);
+            request.onsuccess = (e) => resolve(e.target.result);
+        });
+
+        const saveToDB = async (data) => {
+            const db = await initDB();
+            const tx = db.transaction(storeName, "readwrite");
+            tx.objectStore(storeName).put(data, "current_db");
+        };
+
+        const getFromDB = async () => {
+            const db = await initDB();
+            return new Promise((resolve) => {
+                const request = db.transaction(storeName).objectStore(storeName).get("current_db");
+                request.onsuccess = () => resolve(request.result || []);
             });
-            
+        };
+
+        const App = () => {
+            const [parts, setParts] = useState([]);
             const [view, setView] = useState('home');
             const [searchQuery, setSearchQuery] = useState('');
             const [activeCategory, setActiveCategory] = useState('ВСЕ');
             const [currentPage, setCurrentPage] = useState(1);
             const [isLoading, setIsLoading] = useState(false);
-            const [status, setStatus] = useState('Синхронизация...');
+            const [status, setStatus] = useState('Загрузка...');
             const [toast, setToast] = useState(null);
-            
             const [isAppReady, setIsAppReady] = useState(false);
             const [loadProgress, setLoadProgress] = useState(0);
 
@@ -73,30 +88,32 @@
                 if (!isManual) setLoadProgress(20);
                 
                 try {
-                    const response = await fetch(`data.xlsx?v=${Date.now()}`, { 
-                        cache: "no-store"
-                    });
-                    
+                    // Сначала пытаемся взять из быстрой базы
+                    const cached = await getFromDB();
+                    if (cached.length > 0) setParts(cached);
+
+                    const response = await fetch(`data.xlsx?v=${Date.now()}`, { cache: "no-store" });
                     if (!isManual) setLoadProgress(50);
 
-                    if (!response.ok) throw new Error();
-                    
-                    const arrayBuffer = await response.arrayBuffer();
-                    if (!isManual) setLoadProgress(80);
-
-                    const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
-                    const ws = workbook.Sheets[workbook.SheetNames[0]];
-                    const json = XLSX.utils.sheet_to_json(ws, { header: 1 });
-                    
-                    const formatted = processRows(json);
-                    if (formatted.length > 0) {
-                        setParts(formatted);
-                        localStorage.setItem('rossko_db', JSON.stringify(formatted));
-                        setStatus('Обновлено (Облако)');
-                        if (isManual) showToast("Файл успешно загружен");
+                    if (response.ok) {
+                        const arrayBuffer = await response.arrayBuffer();
+                        if (!isManual) setLoadProgress(80);
+                        const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+                        const ws = workbook.Sheets[workbook.SheetNames[0]];
+                        const json = XLSX.utils.sheet_to_json(ws, { header: 1 });
+                        const formatted = processRows(json);
+                        
+                        if (formatted.length > 0) {
+                            setParts(formatted);
+                            await saveToDB(formatted);
+                            setStatus('Обновлено (Облако)');
+                            if (isManual) showToast("Файл успешно загружен");
+                        }
+                    } else {
+                        throw new Error();
                     }
                 } catch (e) {
-                    setStatus(parts.length > 0 ? 'В сети (Кэш)' : 'Ошибка сети');
+                    setStatus(parts.length > 0 || (await getFromDB()).length > 0 ? 'В сети (Кэш)' : 'Ошибка сети');
                 } finally {
                     setIsLoading(false);
                     if (!isManual) {
@@ -107,13 +124,11 @@
             };
 
             useEffect(() => { loadData(); }, []);
-
             useEffect(() => { setCurrentPage(1); }, [searchQuery, activeCategory]);
 
             const { filteredItems, totalPages } = useMemo(() => {
                 const query = searchQuery.toLowerCase().trim();
                 const searchWords = query.split(/\s+/).filter(w => w.length > 0);
-                
                 let result = parts.filter(p => {
                     const matchCat = activeCategory === 'ВСЕ' || p.category === activeCategory;
                     if (!matchCat) return false;
@@ -125,7 +140,6 @@
                         return nameWords.some(nw => nw.startsWith(word)) || article.includes(word);
                     });
                 });
-
                 if (searchWords.length > 0) {
                     const first = searchWords[0];
                     result.sort((a, b) => {
@@ -136,7 +150,6 @@
                         return a.name.localeCompare(b.name);
                     });
                 }
-
                 const pages = Math.ceil(result.length / ITEMS_PER_PAGE);
                 const sliced = result.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
                 return { filteredItems: sliced, totalPages: pages };
@@ -144,8 +157,6 @@
 
             return (
                 <div className="max-w-md mx-auto min-h-screen bg-white relative shadow-2xl">
-                    
-                    {/* SPLASH SCREEN */}
                     {!isAppReady && (
                         <div className="fixed inset-0 z-[100] bg-blue-600 flex flex-col items-center justify-center p-10">
                             <div className="text-white text-8xl font-black italic mb-8 animate-bounce">R</div>
@@ -155,28 +166,23 @@
                             <p className="text-white/60 text-[10px] font-black uppercase tracking-widest mt-4">Загрузка {loadProgress}%</p>
                         </div>
                     )}
-
-                    {/* TOAST NOTIFICATION */}
                     {toast && (
                         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[110] w-full px-10 toast-animate">
-                            <div className="bg-gray-900 text-white text-[11px] font-bold uppercase tracking-wider py-4 px-6 rounded-2xl text-center shadow-2xl border border-white/10">
+                            <div className="bg-gray-900 text-white text-[11px] font-bold uppercase tracking-wider py-4 px-6 rounded-2xl text-center shadow-2xl">
                                 {toast}
                             </div>
                         </div>
                     )}
-
                     <div className={isAppReady ? 'block' : 'hidden'}>
-                        {/* Header */}
                         <div className="p-6 pb-4 flex justify-between items-center bg-white sticky top-0 z-50 border-b border-gray-50">
                             <div>
                                 <p className="text-[10px] font-black text-blue-600 tracking-widest uppercase">Rossko Terminal</p>
                                 <h1 className="text-3xl font-black italic text-gray-800 uppercase leading-none">Склад</h1>
                             </div>
-                            <span className={`text-[9px] font-bold px-3 py-1.5 rounded-full uppercase transition-colors ${status.includes('Обновлено') ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                            <span className={`text-[9px] font-bold px-3 py-1.5 rounded-full uppercase ${status.includes('Обновлено') ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
                                 {status}
                             </span>
                         </div>
-
                         <div className="pb-32">
                             {view === 'home' && (
                                 <div className="p-6 space-y-6">
@@ -197,21 +203,12 @@
                                     </div>
                                 </div>
                             )}
-
                             {view === 'search' && (
                                 <div className="p-4 space-y-4">
-                                    <input 
-                                        className="w-full bg-gray-100 border-none p-5 rounded-[22px] font-bold outline-none focus:ring-2 ring-blue-500 text-lg shadow-inner"
-                                        placeholder="Поиск товара..."
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                    />
+                                    <input className="w-full bg-gray-100 border-none p-5 rounded-[22px] font-bold outline-none focus:ring-2 ring-blue-500 text-lg shadow-inner" placeholder="Поиск товара..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                                     <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
                                         {CATEGORIES.map(c => (
-                                            <button key={c} onClick={() => setActiveCategory(c)} 
-                                                className={`px-6 py-3 rounded-full text-[10px] font-black transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-400'}`}>
-                                                {c}
-                                            </button>
+                                            <button key={c} onClick={() => setActiveCategory(c)} className={`px-6 py-3 rounded-full text-[10px] font-black transition-all ${activeCategory === c ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-400'}`}>{c}</button>
                                         ))}
                                     </div>
                                     <div className="space-y-3">
@@ -235,7 +232,6 @@
                                     </div>
                                 </div>
                             )}
-
                             {view === 'manage' && (
                                 <div className="p-6">
                                     <div className="p-12 border-4 border-dotted border-blue-50 rounded-[45px] bg-blue-50/20 text-center">
@@ -246,13 +242,17 @@
                                                 const file = e.target.files[0];
                                                 if(!file) return;
                                                 const reader = new FileReader();
-                                                reader.onload = (evt) => {
-                                                    const wb = XLSX.read(evt.target.result, {type:'array'});
-                                                    const ws = wb.Sheets[wb.SheetNames[0]];
-                                                    const rows = processRows(XLSX.utils.sheet_to_json(ws, {header:1}));
-                                                    setParts(rows);
-                                                    localStorage.setItem('rossko_db', JSON.stringify(rows));
-                                                    showToast("Файл успешно загружен");
+                                                reader.onload = async (evt) => {
+                                                    try {
+                                                        const wb = XLSX.read(evt.target.result, {type:'array'});
+                                                        const ws = wb.Sheets[wb.SheetNames[0]];
+                                                        const rows = processRows(XLSX.utils.sheet_to_json(ws, {header:1}));
+                                                        setParts(rows);
+                                                        await saveToDB(rows);
+                                                        showToast("Файл успешно загружен");
+                                                    } catch (err) {
+                                                        showToast("Ошибка обработки файла");
+                                                    }
                                                 };
                                                 reader.readAsArrayBuffer(file);
                                             }} />
@@ -260,7 +260,6 @@
                                     </div>
                                 </div>
                             )}
-
                             {view === 'profile' && (
                                 <div className="p-10 text-center space-y-8">
                                     <div className="w-24 h-24 bg-blue-50 rounded-[35px] mx-auto flex items-center justify-center text-4xl">👤</div>
@@ -268,12 +267,11 @@
                                         <button onClick={() => loadData(true)} disabled={isLoading} className="w-full py-5 rounded-[22px] bg-blue-600 text-white font-black uppercase text-[10px] tracking-widest shadow-xl active:scale-95 transition-all">
                                             {isLoading ? 'Загрузка...' : 'Синхронизировать Облако'}
                                         </button>
-                                        <button onClick={() => { if(confirm('Очистить память?')){ localStorage.clear(); window.location.reload(); } }} className="w-full py-5 bg-red-50 text-red-500 rounded-[22px] font-black uppercase text-[10px] tracking-widest">Сбросить кэш</button>
+                                        <button onClick={() => { if(confirm('Очистить память?')){ indexedDB.deleteDatabase(dbName); localStorage.clear(); window.location.reload(); } }} className="w-full py-5 bg-red-50 text-red-500 rounded-[22px] font-black uppercase text-[10px] tracking-widest">Сбросить всё</button>
                                     </div>
                                 </div>
                             )}
                         </div>
-
                         <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-2xl border-t border-gray-100 flex justify-around py-6 px-6 z-50 rounded-t-[40px] shadow-2xl">
                             {[{ id: 'home', icon: '🏠' }, { id: 'search', icon: '🔍' }, { id: 'manage', icon: '📦' }, { id: 'profile', icon: '👤' }].map(tab => (
                                 <button key={tab.id} onClick={() => setView(tab.id)} className={`text-2xl opacity-20 transition-all duration-300 ${view === tab.id ? 'active-tab opacity-100' : ''}`}>
@@ -285,7 +283,6 @@
                 </div>
             );
         };
-
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
